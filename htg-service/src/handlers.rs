@@ -6,6 +6,7 @@ use axum::{
     response::IntoResponse,
     Json,
 };
+use geojson::{Geometry, Value as GeoJsonValue};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
@@ -194,6 +195,130 @@ fn error_response(lat: f64, lon: f64, e: htg::SrtmError) -> axum::response::Resp
     tracing::warn!(lat = lat, lon = lon, error = %e, "Elevation query failed");
 
     (status, Json(ErrorResponse { error: message })).into_response()
+}
+
+/// Batch elevation query using GeoJSON.
+///
+/// Accepts GeoJSON geometry (Point, MultiPoint, LineString, MultiLineString)
+/// and returns the same geometry with elevation added as the Z coordinate.
+///
+/// # Request Body
+///
+/// GeoJSON geometry object:
+/// ```json
+/// {
+///   "type": "LineString",
+///   "coordinates": [[lon1, lat1], [lon2, lat2], ...]
+/// }
+/// ```
+///
+/// # Response
+///
+/// Same geometry with elevation as 3rd coordinate:
+/// ```json
+/// {
+///   "type": "LineString",
+///   "coordinates": [[lon1, lat1, elev1], [lon2, lat2, elev2], ...]
+/// }
+/// ```
+#[axum::debug_handler]
+pub async fn post_elevation(
+    State(state): State<Arc<AppState>>,
+    Json(geometry): Json<Geometry>,
+) -> impl IntoResponse {
+    tracing::debug!(?geometry, "GeoJSON elevation query");
+
+    match add_elevations_to_geometry(&state.srtm_service, geometry) {
+        Ok(result) => {
+            tracing::info!("GeoJSON elevation query successful");
+            (StatusCode::OK, Json(result)).into_response()
+        }
+        Err(e) => {
+            tracing::warn!(error = %e, "GeoJSON elevation query failed");
+            (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response()
+        }
+    }
+}
+
+/// Add elevations to a GeoJSON geometry.
+fn add_elevations_to_geometry(
+    service: &htg::SrtmService,
+    geometry: Geometry,
+) -> Result<Geometry, String> {
+    let new_value = match geometry.value {
+        GeoJsonValue::Point(coord) => {
+            let elevated = add_elevation_to_coord(service, &coord)?;
+            GeoJsonValue::Point(elevated)
+        }
+        GeoJsonValue::MultiPoint(coords) => {
+            let elevated = add_elevation_to_coords(service, &coords)?;
+            GeoJsonValue::MultiPoint(elevated)
+        }
+        GeoJsonValue::LineString(coords) => {
+            let elevated = add_elevation_to_coords(service, &coords)?;
+            GeoJsonValue::LineString(elevated)
+        }
+        GeoJsonValue::MultiLineString(lines) => {
+            let elevated: Result<Vec<_>, _> = lines
+                .iter()
+                .map(|line| add_elevation_to_coords(service, line))
+                .collect();
+            GeoJsonValue::MultiLineString(elevated?)
+        }
+        GeoJsonValue::Polygon(rings) => {
+            let elevated: Result<Vec<_>, _> = rings
+                .iter()
+                .map(|ring| add_elevation_to_coords(service, ring))
+                .collect();
+            GeoJsonValue::Polygon(elevated?)
+        }
+        GeoJsonValue::MultiPolygon(polygons) => {
+            let elevated: Result<Vec<_>, _> = polygons
+                .iter()
+                .map(|polygon| {
+                    polygon
+                        .iter()
+                        .map(|ring| add_elevation_to_coords(service, ring))
+                        .collect::<Result<Vec<_>, _>>()
+                })
+                .collect();
+            GeoJsonValue::MultiPolygon(elevated?)
+        }
+        GeoJsonValue::GeometryCollection(geometries) => {
+            let elevated: Result<Vec<_>, _> = geometries
+                .into_iter()
+                .map(|g| add_elevations_to_geometry(service, g))
+                .collect();
+            GeoJsonValue::GeometryCollection(elevated?)
+        }
+    };
+
+    Ok(Geometry::new(new_value))
+}
+
+/// Add elevation to a single coordinate [lon, lat] -> [lon, lat, elevation].
+fn add_elevation_to_coord(service: &htg::SrtmService, coord: &[f64]) -> Result<Vec<f64>, String> {
+    if coord.len() < 2 {
+        return Err("Coordinate must have at least 2 elements (lon, lat)".to_string());
+    }
+
+    let lon = coord[0];
+    let lat = coord[1];
+
+    let elevation = service.get_elevation(lat, lon).map_err(|e| e.to_string())?;
+
+    Ok(vec![lon, lat, elevation as f64])
+}
+
+/// Add elevations to a list of coordinates.
+fn add_elevation_to_coords(
+    service: &htg::SrtmService,
+    coords: &[Vec<f64>],
+) -> Result<Vec<Vec<f64>>, String> {
+    coords
+        .iter()
+        .map(|coord| add_elevation_to_coord(service, coord))
+        .collect()
 }
 
 /// Health check endpoint.
