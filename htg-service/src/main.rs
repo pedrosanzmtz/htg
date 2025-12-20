@@ -16,6 +16,7 @@
 //! ## Endpoints
 //!
 //! - `GET /elevation?lat=X&lon=Y` - Get elevation at coordinates
+//! - `POST /elevation` - Batch elevation query with GeoJSON geometry
 //! - `GET /health` - Health check
 //! - `GET /stats` - Cache statistics
 
@@ -79,7 +80,10 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build router
     let app = Router::new()
-        .route("/elevation", get(handlers::get_elevation))
+        .route(
+            "/elevation",
+            get(handlers::get_elevation).post(handlers::post_elevation),
+        )
         .route("/health", get(handlers::health_check))
         .route("/stats", get(handlers::get_stats))
         .layer(TraceLayer::new_for_http())

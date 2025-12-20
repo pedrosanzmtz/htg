@@ -2,6 +2,7 @@
 
 use axum::{routing::get, Router};
 use axum_test::TestServer;
+use geojson::{Geometry, Value as GeoJsonValue};
 use htg::SrtmService;
 use serde_json::Value;
 use std::fs::File;
@@ -39,7 +40,7 @@ async fn create_test_server(temp_dir: &TempDir) -> TestServer {
     let state = Arc::new(AppState { srtm_service });
 
     let app = Router::new()
-        .route("/elevation", get(get_elevation))
+        .route("/elevation", get(get_elevation).post(post_elevation))
         .route("/health", get(health_check))
         .route("/stats", get(get_stats))
         .with_state(state);
@@ -177,6 +178,69 @@ async fn get_stats(State(state): State<Arc<AppState>>) -> Json<StatsResponse> {
         cache_misses: stats.miss_count,
         hit_rate: stats.hit_rate(),
     })
+}
+
+async fn post_elevation(
+    State(state): State<Arc<AppState>>,
+    Json(geometry): Json<Geometry>,
+) -> impl IntoResponse {
+    match add_elevations_to_geometry(&state.srtm_service, geometry) {
+        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
+        Err(e) => (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response(),
+    }
+}
+
+fn add_elevations_to_geometry(
+    service: &htg::SrtmService,
+    geometry: Geometry,
+) -> Result<Geometry, String> {
+    let new_value = match geometry.value {
+        GeoJsonValue::Point(coord) => {
+            let elevated = add_elevation_to_coord(service, &coord)?;
+            GeoJsonValue::Point(elevated)
+        }
+        GeoJsonValue::MultiPoint(coords) => {
+            let elevated = add_elevation_to_coords(service, &coords)?;
+            GeoJsonValue::MultiPoint(elevated)
+        }
+        GeoJsonValue::LineString(coords) => {
+            let elevated = add_elevation_to_coords(service, &coords)?;
+            GeoJsonValue::LineString(elevated)
+        }
+        GeoJsonValue::MultiLineString(lines) => {
+            let elevated: Result<Vec<_>, _> = lines
+                .iter()
+                .map(|line| add_elevation_to_coords(service, line))
+                .collect();
+            GeoJsonValue::MultiLineString(elevated?)
+        }
+        _ => return Err("Unsupported geometry type".to_string()),
+    };
+
+    Ok(Geometry::new(new_value))
+}
+
+fn add_elevation_to_coord(service: &htg::SrtmService, coord: &[f64]) -> Result<Vec<f64>, String> {
+    if coord.len() < 2 {
+        return Err("Coordinate must have at least 2 elements (lon, lat)".to_string());
+    }
+
+    let lon = coord[0];
+    let lat = coord[1];
+
+    let elevation = service.get_elevation(lat, lon).map_err(|e| e.to_string())?;
+
+    Ok(vec![lon, lat, elevation as f64])
+}
+
+fn add_elevation_to_coords(
+    service: &htg::SrtmService,
+    coords: &[Vec<f64>],
+) -> Result<Vec<Vec<f64>>, String> {
+    coords
+        .iter()
+        .map(|coord| add_elevation_to_coord(service, coord))
+        .collect()
 }
 
 #[tokio::test]
@@ -317,4 +381,145 @@ async fn test_elevation_endpoint_no_interpolation() {
     // Should have integer elevation and no interpolated flag
     assert_eq!(json["elevation"], 500);
     assert!(json.get("interpolated").is_none());
+}
+
+// GeoJSON POST endpoint tests
+
+#[tokio::test]
+async fn test_geojson_point() {
+    let temp_dir = TempDir::new().unwrap();
+    create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+    let server = create_test_server(&temp_dir).await;
+
+    let geometry = Geometry::new(GeoJsonValue::Point(vec![138.5, 35.5]));
+
+    let response = server.post("/elevation").json(&geometry).await;
+
+    response.assert_status_ok();
+    let json: Value = response.json();
+    assert_eq!(json["type"], "Point");
+
+    let coords = json["coordinates"].as_array().unwrap();
+    assert_eq!(coords[0].as_f64().unwrap(), 138.5);
+    assert_eq!(coords[1].as_f64().unwrap(), 35.5);
+    assert_eq!(coords[2].as_f64().unwrap(), 500.0);
+}
+
+#[tokio::test]
+async fn test_geojson_multipoint() {
+    let temp_dir = TempDir::new().unwrap();
+    create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+    let server = create_test_server(&temp_dir).await;
+
+    let geometry = Geometry::new(GeoJsonValue::MultiPoint(vec![
+        vec![138.5, 35.5],
+        vec![138.5, 35.5],
+    ]));
+
+    let response = server.post("/elevation").json(&geometry).await;
+
+    response.assert_status_ok();
+    let json: Value = response.json();
+    assert_eq!(json["type"], "MultiPoint");
+
+    let coords = json["coordinates"].as_array().unwrap();
+    assert_eq!(coords.len(), 2);
+
+    // Both points should have elevation 500
+    for coord in coords {
+        let c = coord.as_array().unwrap();
+        assert_eq!(c[2].as_f64().unwrap(), 500.0);
+    }
+}
+
+#[tokio::test]
+async fn test_geojson_linestring() {
+    let temp_dir = TempDir::new().unwrap();
+    create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+    let server = create_test_server(&temp_dir).await;
+
+    let geometry = Geometry::new(GeoJsonValue::LineString(vec![
+        vec![138.5, 35.5],
+        vec![138.5, 35.5],
+        vec![138.5, 35.5],
+    ]));
+
+    let response = server.post("/elevation").json(&geometry).await;
+
+    response.assert_status_ok();
+    let json: Value = response.json();
+    assert_eq!(json["type"], "LineString");
+
+    let coords = json["coordinates"].as_array().unwrap();
+    assert_eq!(coords.len(), 3);
+
+    // All points should have elevation 500
+    for coord in coords {
+        let c = coord.as_array().unwrap();
+        assert_eq!(c.len(), 3); // lon, lat, elevation
+        assert_eq!(c[2].as_f64().unwrap(), 500.0);
+    }
+}
+
+#[tokio::test]
+async fn test_geojson_multilinestring() {
+    let temp_dir = TempDir::new().unwrap();
+    create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+    let server = create_test_server(&temp_dir).await;
+
+    let geometry = Geometry::new(GeoJsonValue::MultiLineString(vec![
+        vec![vec![138.5, 35.5], vec![138.5, 35.5]],
+        vec![vec![138.5, 35.5], vec![138.5, 35.5]],
+    ]));
+
+    let response = server.post("/elevation").json(&geometry).await;
+
+    response.assert_status_ok();
+    let json: Value = response.json();
+    assert_eq!(json["type"], "MultiLineString");
+
+    let lines = json["coordinates"].as_array().unwrap();
+    assert_eq!(lines.len(), 2);
+
+    for line in lines {
+        let coords = line.as_array().unwrap();
+        for coord in coords {
+            let c = coord.as_array().unwrap();
+            assert_eq!(c[2].as_f64().unwrap(), 500.0);
+        }
+    }
+}
+
+#[tokio::test]
+async fn test_geojson_missing_tile() {
+    let temp_dir = TempDir::new().unwrap();
+    let server = create_test_server(&temp_dir).await;
+
+    // No tile exists for these coordinates
+    let geometry = Geometry::new(GeoJsonValue::Point(vec![50.0, 50.0]));
+
+    let response = server.post("/elevation").json(&geometry).await;
+
+    response.assert_status(StatusCode::BAD_REQUEST);
+    let json: Value = response.json();
+    assert!(json["error"].as_str().is_some());
+}
+
+#[tokio::test]
+async fn test_geojson_invalid_coordinates() {
+    let temp_dir = TempDir::new().unwrap();
+    let server = create_test_server(&temp_dir).await;
+
+    // Latitude out of range
+    let geometry = Geometry::new(GeoJsonValue::Point(vec![0.0, 91.0]));
+
+    let response = server.post("/elevation").json(&geometry).await;
+
+    response.assert_status(StatusCode::BAD_REQUEST);
+    let json: Value = response.json();
+    assert!(json["error"].as_str().unwrap().contains("out of bounds"));
 }
