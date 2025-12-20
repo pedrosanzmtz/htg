@@ -8,14 +8,24 @@ license = "MIT"
 repository = "https://github.com/pedrosanzmtz/htg"
 
 [dependencies]
-htg = { path = "../htg" }
+htg = { path = "../htg", features = ["download"] }
 
-# HTTP dependencies will be added in Phase 4
-# axum = "0.7"
-# tokio = { version = "1", features = ["full"] }
-# serde = { version = "1", features = ["derive"] }
-# serde_json = "1"
-# tower = "0.4"
-# tower-http = { version = "0.5", features = ["cors", "trace"] }
-# tracing = "0.1"
-# tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+# HTTP framework
+axum = { version = "0.7", features = ["macros"] }
+tokio = { version = "1", features = ["full"] }
+
+# Serialization
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# Middleware
+tower = "0.5"
+tower-http = { version = "0.6", features = ["cors", "trace"] }
+
+# Logging
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[dev-dependencies]
+axum-test = "16"
+tempfile = "3.8"
