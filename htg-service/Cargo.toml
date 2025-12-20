@@ -7,6 +7,14 @@ description = "HTTP microservice for SRTM elevation queries"
 license = "MIT"
 repository = "https://github.com/pedrosanzmtz/htg"
 
+[lib]
+name = "htg_service"
+path = "src/lib.rs"
+
+[[bin]]
+name = "htg-service"
+path = "src/main.rs"
+
 [dependencies]
 htg = { path = "../htg", features = ["download"] }
 
