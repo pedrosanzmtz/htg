@@ -115,20 +115,33 @@ fn build_srtm_service(
 
     // Check for download configuration
     if let Ok(url_template) = std::env::var("HTG_DOWNLOAD_URL") {
-        let is_gzipped = std::env::var("HTG_DOWNLOAD_GZIP")
-            .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-            .unwrap_or(false);
+        // Check for explicit compression setting, otherwise auto-detect from URL
+        let config = if let Ok(gzip_setting) = std::env::var("HTG_DOWNLOAD_GZIP") {
+            let is_gzipped = gzip_setting.eq_ignore_ascii_case("true") || gzip_setting == "1";
+            let compression = if is_gzipped {
+                htg::download::Compression::Gzip
+            } else {
+                htg::download::Compression::None
+            };
+            tracing::info!(
+                url_template = %url_template,
+                ?compression,
+                "Auto-download enabled (explicit compression)"
+            );
+            htg::download::DownloadConfig::with_url_template_and_compression(
+                url_template,
+                compression,
+            )
+        } else {
+            // Auto-detect compression from URL extension
+            tracing::info!(
+                url_template = %url_template,
+                "Auto-download enabled (auto-detect compression)"
+            );
+            htg::download::DownloadConfig::with_url_template(url_template)
+        };
 
-        tracing::info!(
-            url_template = %url_template,
-            is_gzipped = is_gzipped,
-            "Auto-download enabled"
-        );
-
-        builder = builder.auto_download(htg::download::DownloadConfig::with_url_template(
-            url_template,
-            is_gzipped,
-        ));
+        builder = builder.auto_download(config);
     }
 
     Ok(builder.build()?)

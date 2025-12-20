@@ -14,14 +14,51 @@
 //! This module supports configurable data sources via URL templates.
 
 use std::fs::{self, File};
-use std::io::{self, Read, Write};
+use std::io::{Cursor, Read, Write};
 use std::path::Path;
 
 use flate2::read::GzDecoder;
 use reqwest::blocking::Client;
+use zip::ZipArchive;
 
 use crate::error::{Result, SrtmError};
 use crate::filename::lat_lon_to_filename;
+
+/// Compression format for downloaded SRTM files.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
+pub enum Compression {
+    /// No compression - raw .hgt file
+    #[default]
+    None,
+    /// Gzip compression (.hgt.gz)
+    Gzip,
+    /// ZIP archive (.hgt.zip)
+    Zip,
+}
+
+impl Compression {
+    /// Detect compression format from a URL or filename.
+    ///
+    /// # Examples
+    ///
+    /// ```ignore
+    /// use htg::download::Compression;
+    ///
+    /// assert_eq!(Compression::from_url("file.hgt.gz"), Compression::Gzip);
+    /// assert_eq!(Compression::from_url("file.hgt.zip"), Compression::Zip);
+    /// assert_eq!(Compression::from_url("file.hgt"), Compression::None);
+    /// ```
+    pub fn from_url(url: &str) -> Self {
+        let lower = url.to_lowercase();
+        if lower.ends_with(".gz") {
+            Compression::Gzip
+        } else if lower.ends_with(".zip") {
+            Compression::Zip
+        } else {
+            Compression::None
+        }
+    }
+}
 
 /// Default timeout for HTTP requests in seconds.
 const DEFAULT_TIMEOUT_SECS: u64 = 300;
@@ -44,12 +81,13 @@ pub enum SrtmSource {
     ///
     /// Examples:
     /// - `https://example.com/srtm/{filename}.hgt.gz`
+    /// - `https://example.com/srtm/{filename}.hgt.zip`
     /// - `https://example.com/{lat_prefix}{lat}/{filename}.hgt`
     Custom {
         /// URL template with placeholders
         url_template: String,
-        /// Whether the file is gzip compressed
-        is_gzipped: bool,
+        /// Compression format of the downloaded file
+        compression: Compression,
     },
 }
 
@@ -58,7 +96,7 @@ impl Default for SrtmSource {
         // Default to a custom template that users must configure
         SrtmSource::Custom {
             url_template: String::new(),
-            is_gzipped: false,
+            compression: Compression::None,
         }
     }
 }
@@ -87,29 +125,76 @@ impl Default for DownloadConfig {
 impl DownloadConfig {
     /// Create a new download configuration with a custom URL template.
     ///
+    /// Compression is auto-detected from the URL extension:
+    /// - `.gz` → Gzip
+    /// - `.zip` → ZIP
+    /// - otherwise → None
+    ///
     /// # Arguments
     ///
     /// * `url_template` - URL template with `{filename}` placeholder
-    /// * `is_gzipped` - Whether the downloaded file is gzip compressed
     ///
     /// # Example
     ///
     /// ```ignore
     /// use htg::download::DownloadConfig;
     ///
+    /// // Compression auto-detected from .gz extension
     /// let config = DownloadConfig::with_url_template(
     ///     "https://example.com/srtm/{filename}.hgt.gz",
-    ///     true,
+    /// );
+    ///
+    /// // ZIP compression auto-detected
+    /// let config = DownloadConfig::with_url_template(
+    ///     "https://example.com/srtm/{filename}.hgt.zip",
     /// );
     /// ```
-    pub fn with_url_template(url_template: impl Into<String>, is_gzipped: bool) -> Self {
+    pub fn with_url_template(url_template: impl Into<String>) -> Self {
+        let template = url_template.into();
+        let compression = Compression::from_url(&template);
         Self {
             source: SrtmSource::Custom {
-                url_template: url_template.into(),
-                is_gzipped,
+                url_template: template,
+                compression,
             },
             ..Default::default()
         }
+    }
+
+    /// Create a new download configuration with explicit compression setting.
+    ///
+    /// # Arguments
+    ///
+    /// * `url_template` - URL template with `{filename}` placeholder
+    /// * `compression` - Compression format of the downloaded file
+    pub fn with_url_template_and_compression(
+        url_template: impl Into<String>,
+        compression: Compression,
+    ) -> Self {
+        Self {
+            source: SrtmSource::Custom {
+                url_template: url_template.into(),
+                compression,
+            },
+            ..Default::default()
+        }
+    }
+
+    /// Create a new download configuration with a custom URL template.
+    ///
+    /// **Deprecated:** Use `with_url_template` (auto-detects compression) or
+    /// `with_url_template_and_compression` instead.
+    #[deprecated(
+        since = "0.2.0",
+        note = "Use with_url_template (auto-detects) or with_url_template_and_compression"
+    )]
+    pub fn with_url_template_gzipped(url_template: impl Into<String>, is_gzipped: bool) -> Self {
+        let compression = if is_gzipped {
+            Compression::Gzip
+        } else {
+            Compression::None
+        };
+        Self::with_url_template_and_compression(url_template, compression)
     }
 
     /// Create a configuration for NASA Earthdata.
@@ -277,35 +362,74 @@ impl Downloader {
 
         let bytes = response.bytes()?;
 
-        // Check if we need to decompress
-        let is_gzipped = match &self.config.source {
-            SrtmSource::Custom { is_gzipped, .. } => *is_gzipped,
-            SrtmSource::NasaEarthdata { .. } => false, // NASA uses .zip, needs different handling
+        // Determine compression format
+        let compression = match &self.config.source {
+            SrtmSource::Custom { compression, .. } => *compression,
+            SrtmSource::NasaEarthdata { .. } => Compression::Zip,
         };
 
-        if is_gzipped {
-            // Decompress gzip data
-            let mut decoder = GzDecoder::new(&bytes[..]);
-            let mut decompressed = Vec::new();
-            decoder
-                .read_to_end(&mut decompressed)
-                .map_err(|e| SrtmError::DownloadFailed {
-                    filename: dest_path
-                        .file_name()
-                        .map(|s| s.to_string_lossy().to_string())
-                        .unwrap_or_default(),
-                    reason: format!("Failed to decompress: {}", e),
-                })?;
+        let filename = dest_path
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_default();
 
-            let mut file = File::create(dest_path)?;
-            file.write_all(&decompressed)?;
-        } else {
-            // Write raw bytes
-            let mut file = File::create(dest_path)?;
-            io::copy(&mut &bytes[..], &mut file)?;
-        }
+        let decompressed = match compression {
+            Compression::None => bytes.to_vec(),
+            Compression::Gzip => {
+                let mut decoder = GzDecoder::new(&bytes[..]);
+                let mut data = Vec::new();
+                decoder
+                    .read_to_end(&mut data)
+                    .map_err(|e| SrtmError::DownloadFailed {
+                        filename: filename.clone(),
+                        reason: format!("Failed to decompress gzip: {}", e),
+                    })?;
+                data
+            }
+            Compression::Zip => Self::extract_hgt_from_zip(&bytes, &filename)?,
+        };
+
+        let mut file = File::create(dest_path)?;
+        file.write_all(&decompressed)?;
 
         Ok(())
+    }
+
+    /// Extract an .hgt file from a ZIP archive.
+    ///
+    /// Searches the archive for a file ending in ".hgt" (case-insensitive)
+    /// and returns its contents.
+    fn extract_hgt_from_zip(data: &[u8], filename: &str) -> Result<Vec<u8>> {
+        let cursor = Cursor::new(data);
+        let mut archive = ZipArchive::new(cursor).map_err(|e| SrtmError::DownloadFailed {
+            filename: filename.to_string(),
+            reason: format!("Failed to read ZIP archive: {}", e),
+        })?;
+
+        // Search for an .hgt file in the archive
+        for i in 0..archive.len() {
+            let mut zip_file = archive.by_index(i).map_err(|e| SrtmError::DownloadFailed {
+                filename: filename.to_string(),
+                reason: format!("Failed to read ZIP entry: {}", e),
+            })?;
+
+            let name = zip_file.name().to_lowercase();
+            if name.ends_with(".hgt") {
+                let mut contents = Vec::new();
+                zip_file
+                    .read_to_end(&mut contents)
+                    .map_err(|e| SrtmError::DownloadFailed {
+                        filename: filename.to_string(),
+                        reason: format!("Failed to extract .hgt from ZIP: {}", e),
+                    })?;
+                return Ok(contents);
+            }
+        }
+
+        Err(SrtmError::DownloadFailed {
+            filename: filename.to_string(),
+            reason: "No .hgt file found in ZIP archive".to_string(),
+        })
     }
 }
 
@@ -349,7 +473,6 @@ mod tests {
     fn test_build_url_custom() {
         let config = DownloadConfig::with_url_template(
             "https://example.com/srtm/{lat_prefix}{lat}/{filename}.hgt.gz",
-            true,
         );
         let downloader = Downloader::new(config).unwrap();
         let url = downloader.build_url("N35E138").unwrap();
@@ -366,11 +489,83 @@ mod tests {
 
     #[test]
     fn test_download_config_builder() {
-        let config = DownloadConfig::with_url_template("https://example.com/{filename}.hgt", false)
+        let config = DownloadConfig::with_url_template("https://example.com/{filename}.hgt")
             .with_timeout(60)
             .with_max_retries(5);
 
         assert_eq!(config.timeout_secs, 60);
         assert_eq!(config.max_retries, 5);
+    }
+
+    #[test]
+    fn test_compression_from_url() {
+        assert_eq!(Compression::from_url("file.hgt"), Compression::None);
+        assert_eq!(Compression::from_url("file.hgt.gz"), Compression::Gzip);
+        assert_eq!(Compression::from_url("file.hgt.zip"), Compression::Zip);
+        assert_eq!(Compression::from_url("FILE.HGT.GZ"), Compression::Gzip);
+        assert_eq!(Compression::from_url("FILE.HGT.ZIP"), Compression::Zip);
+        assert_eq!(
+            Compression::from_url("https://example.com/srtm/N35E138.hgt.zip"),
+            Compression::Zip
+        );
+    }
+
+    #[test]
+    fn test_compression_auto_detect() {
+        let config = DownloadConfig::with_url_template("https://example.com/{filename}.hgt.gz");
+        if let SrtmSource::Custom { compression, .. } = config.source {
+            assert_eq!(compression, Compression::Gzip);
+        } else {
+            panic!("Expected Custom source");
+        }
+
+        let config = DownloadConfig::with_url_template("https://example.com/{filename}.hgt.zip");
+        if let SrtmSource::Custom { compression, .. } = config.source {
+            assert_eq!(compression, Compression::Zip);
+        } else {
+            panic!("Expected Custom source");
+        }
+
+        let config = DownloadConfig::with_url_template("https://example.com/{filename}.hgt");
+        if let SrtmSource::Custom { compression, .. } = config.source {
+            assert_eq!(compression, Compression::None);
+        } else {
+            panic!("Expected Custom source");
+        }
+    }
+
+    #[test]
+    fn test_extract_hgt_from_zip() {
+        // Create a minimal ZIP file with a fake .hgt file
+        let mut zip_buffer = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(Cursor::new(&mut zip_buffer));
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("N35E138.hgt", options).unwrap();
+            // Write some fake HGT data (just a few bytes for testing)
+            zip.write_all(&[0u8; 100]).unwrap();
+            zip.finish().unwrap();
+        }
+
+        let result = Downloader::extract_hgt_from_zip(&zip_buffer, "test.hgt");
+        assert!(result.is_ok());
+        assert_eq!(result.unwrap().len(), 100);
+    }
+
+    #[test]
+    fn test_extract_hgt_from_zip_no_hgt_file() {
+        // Create a ZIP file without an .hgt file
+        let mut zip_buffer = Vec::new();
+        {
+            let mut zip = zip::ZipWriter::new(Cursor::new(&mut zip_buffer));
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("readme.txt", options).unwrap();
+            zip.write_all(b"Not an HGT file").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let result = Downloader::extract_hgt_from_zip(&zip_buffer, "test.hgt");
+        assert!(result.is_err());
     }
 }
