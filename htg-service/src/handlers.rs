@@ -9,25 +9,30 @@ use axum::{
 use geojson::{Geometry, Value as GeoJsonValue};
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
+use utoipa::{IntoParams, ToSchema};
 
 use crate::AppState;
 
 /// Query parameters for elevation endpoint.
-#[derive(Debug, Deserialize)]
+#[derive(Debug, Deserialize, IntoParams, ToSchema)]
 pub struct ElevationQuery {
     /// Latitude in decimal degrees (-60 to 60).
+    #[param(example = 35.3606)]
     pub lat: f64,
     /// Longitude in decimal degrees (-180 to 180).
+    #[param(example = 138.7274)]
     pub lon: f64,
     /// Whether to use bilinear interpolation for sub-pixel accuracy.
     /// When true, returns a floating-point elevation value.
     /// Default is false (nearest-neighbor lookup).
     #[serde(default)]
+    #[param(example = false)]
     pub interpolate: bool,
 }
 
 /// Successful elevation response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
+#[schema(example = json!({"elevation": 3776, "lat": 35.3606, "lon": 138.7274}))]
 pub struct ElevationResponse {
     /// Elevation in meters (integer, nearest-neighbor lookup).
     pub elevation: i16,
@@ -38,7 +43,8 @@ pub struct ElevationResponse {
 }
 
 /// Successful interpolated elevation response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
+#[schema(example = json!({"elevation": 3776.42, "lat": 35.3606, "lon": 138.7274, "interpolated": true}))]
 pub struct InterpolatedElevationResponse {
     /// Elevation in meters (floating-point, bilinear interpolation).
     pub elevation: f64,
@@ -51,14 +57,16 @@ pub struct InterpolatedElevationResponse {
 }
 
 /// Error response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
+#[schema(example = json!({"error": "Coordinates out of bounds: lat=91, lon=0"}))]
 pub struct ErrorResponse {
     /// Error message.
     pub error: String,
 }
 
 /// Health check response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
+#[schema(example = json!({"status": "healthy", "version": "0.1.0"}))]
 pub struct HealthResponse {
     /// Service status.
     pub status: String,
@@ -67,7 +75,8 @@ pub struct HealthResponse {
 }
 
 /// Cache statistics response.
-#[derive(Debug, Serialize)]
+#[derive(Debug, Serialize, ToSchema)]
+#[schema(example = json!({"cached_tiles": 45, "cache_hits": 1234, "cache_misses": 56, "hit_rate": 0.956}))]
 pub struct StatsResponse {
     /// Number of tiles in cache.
     pub cached_tiles: u64,
@@ -81,18 +90,21 @@ pub struct StatsResponse {
 
 /// Get elevation for given coordinates.
 ///
-/// # Query Parameters
-///
-/// - `lat`: Latitude in decimal degrees (-60 to 60)
-/// - `lon`: Longitude in decimal degrees (-180 to 180)
-/// - `interpolate`: Optional boolean to enable bilinear interpolation (default: false)
-///
-/// # Returns
-///
-/// - `200 OK` with elevation data on success
-/// - `400 Bad Request` if coordinates are invalid
-/// - `404 Not Found` if tile data is unavailable
-/// - `500 Internal Server Error` on unexpected errors
+/// Returns the elevation in meters for the specified latitude and longitude.
+/// Optionally uses bilinear interpolation for sub-pixel accuracy.
+#[utoipa::path(
+    get,
+    path = "/elevation",
+    params(ElevationQuery),
+    responses(
+        (status = 200, description = "Elevation found", body = ElevationResponse),
+        (status = 200, description = "Interpolated elevation found", body = InterpolatedElevationResponse),
+        (status = 400, description = "Invalid coordinates", body = ErrorResponse),
+        (status = 404, description = "Tile not available", body = ErrorResponse),
+        (status = 500, description = "Internal server error", body = ErrorResponse),
+    ),
+    tag = "elevation"
+)]
 #[axum::debug_handler]
 pub async fn get_elevation(
     State(state): State<Arc<AppState>>,
@@ -199,28 +211,25 @@ fn error_response(lat: f64, lon: f64, e: htg::SrtmError) -> axum::response::Resp
 
 /// Batch elevation query using GeoJSON.
 ///
-/// Accepts GeoJSON geometry (Point, MultiPoint, LineString, MultiLineString)
-/// and returns the same geometry with elevation added as the Z coordinate.
+/// Accepts GeoJSON geometry and returns the same geometry with elevation
+/// added as the Z coordinate to all points.
 ///
-/// # Request Body
-///
-/// GeoJSON geometry object:
-/// ```json
-/// {
-///   "type": "LineString",
-///   "coordinates": [[lon1, lat1], [lon2, lat2], ...]
-/// }
-/// ```
-///
-/// # Response
-///
-/// Same geometry with elevation as 3rd coordinate:
-/// ```json
-/// {
-///   "type": "LineString",
-///   "coordinates": [[lon1, lat1, elev1], [lon2, lat2, elev2], ...]
-/// }
-/// ```
+/// Supported geometry types: Point, MultiPoint, LineString, MultiLineString,
+/// Polygon, MultiPolygon, GeometryCollection.
+#[utoipa::path(
+    post,
+    path = "/elevation",
+    request_body(
+        content = serde_json::Value,
+        description = "GeoJSON Geometry object",
+        example = json!({"type": "LineString", "coordinates": [[138.7274, 35.3606], [138.7300, 35.3650]]})
+    ),
+    responses(
+        (status = 200, description = "Geometry with elevations added", content_type = "application/json"),
+        (status = 400, description = "Invalid geometry or coordinates", body = ErrorResponse),
+    ),
+    tag = "elevation"
+)]
 #[axum::debug_handler]
 pub async fn post_elevation(
     State(state): State<Arc<AppState>>,
@@ -324,6 +333,14 @@ fn add_elevation_to_coords(
 /// Health check endpoint.
 ///
 /// Returns service status and version.
+#[utoipa::path(
+    get,
+    path = "/health",
+    responses(
+        (status = 200, description = "Service is healthy", body = HealthResponse),
+    ),
+    tag = "system"
+)]
 pub async fn health_check() -> Json<HealthResponse> {
     Json(HealthResponse {
         status: "healthy".to_string(),
@@ -333,7 +350,15 @@ pub async fn health_check() -> Json<HealthResponse> {
 
 /// Get cache statistics.
 ///
-/// Returns information about the tile cache.
+/// Returns information about the tile cache including hit rate.
+#[utoipa::path(
+    get,
+    path = "/stats",
+    responses(
+        (status = 200, description = "Cache statistics", body = StatsResponse),
+    ),
+    tag = "system"
+)]
 pub async fn get_stats(State(state): State<Arc<AppState>>) -> Json<StatsResponse> {
     let stats = state.srtm_service.cache_stats();
 
