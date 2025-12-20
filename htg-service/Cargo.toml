@@ -16,7 +16,7 @@ name = "htg-service"
 path = "src/main.rs"
 
 [dependencies]
-htg = { path = "../htg", features = ["download"] }
+htg = { path = "../htg", features = ["download", "geojson"] }
 
 # HTTP framework
 axum = { version = "0.7", features = ["macros"] }

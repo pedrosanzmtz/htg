@@ -689,6 +689,7 @@ name = "htg"
 version = "0.1.0"
 dependencies = [
  "flate2",
+ "geojson",
  "memmap2",
  "moka",
  "reqwest",
