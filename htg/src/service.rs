@@ -323,6 +323,87 @@ impl SrtmServiceBuilder {
         }
     }
 
+    /// Create a builder configured from environment variables.
+    ///
+    /// # Environment Variables
+    ///
+    /// | Variable | Description | Default |
+    /// |----------|-------------|---------|
+    /// | `HTG_DATA_DIR` | Directory containing .hgt files | Required |
+    /// | `HTG_CACHE_SIZE` | Maximum tiles in cache | 100 |
+    /// | `HTG_DOWNLOAD_URL` | URL template for downloads* | None |
+    /// | `HTG_DOWNLOAD_GZIP` | Whether URL serves gzip files* | false |
+    ///
+    /// *Only used when `download` feature is enabled.
+    ///
+    /// # URL Template Placeholders
+    ///
+    /// - `{filename}` - Full filename (e.g., "N35E138")
+    /// - `{lat_prefix}` - N or S
+    /// - `{lat}` - Latitude digits (e.g., "35")
+    /// - `{lon_prefix}` - E or W
+    /// - `{lon}` - Longitude digits (e.g., "138")
+    ///
+    /// # Example
+    ///
+    /// ```bash
+    /// export HTG_DATA_DIR=/data/srtm
+    /// export HTG_CACHE_SIZE=50
+    /// export HTG_DOWNLOAD_URL="https://example.com/srtm/{filename}.hgt.gz"
+    /// export HTG_DOWNLOAD_GZIP=true
+    /// ```
+    ///
+    /// ```ignore
+    /// use htg::SrtmServiceBuilder;
+    ///
+    /// let service = SrtmServiceBuilder::from_env()?.build()?;
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `HTG_DATA_DIR` is not set.
+    pub fn from_env() -> Result<Self> {
+        let data_dir = std::env::var("HTG_DATA_DIR").map_err(|_| {
+            SrtmError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "HTG_DATA_DIR environment variable not set",
+            ))
+        })?;
+
+        let cache_size: u64 = std::env::var("HTG_CACHE_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100);
+
+        #[cfg(feature = "download")]
+        let download_config = {
+            match std::env::var("HTG_DOWNLOAD_URL") {
+                Ok(url_template) => {
+                    let is_gzipped = std::env::var("HTG_DOWNLOAD_GZIP")
+                        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                        .unwrap_or(false);
+                    Some(DownloadConfig::with_url_template(url_template, is_gzipped))
+                }
+                Err(_) => None,
+            }
+        };
+
+        Ok(Self {
+            data_dir: PathBuf::from(data_dir),
+            cache_size,
+            #[cfg(feature = "download")]
+            download_config,
+        })
+    }
+
+    /// Set the data directory.
+    ///
+    /// Overrides the directory set in the constructor or from environment.
+    pub fn data_dir<P: AsRef<Path>>(mut self, path: P) -> Self {
+        self.data_dir = path.as_ref().to_path_buf();
+        self
+    }
+
     /// Set the maximum number of tiles to keep in cache.
     ///
     /// Default is 100 tiles.
@@ -548,5 +629,73 @@ mod tests {
         let service = SrtmService::new(temp_dir.path(), 100);
 
         assert_eq!(service.cache_capacity(), 100);
+    }
+
+    #[test]
+    fn test_from_env_missing_data_dir() {
+        // Temporarily unset the env var if it exists
+        let original = std::env::var("HTG_DATA_DIR").ok();
+        std::env::remove_var("HTG_DATA_DIR");
+
+        let result = SrtmServiceBuilder::from_env();
+        assert!(result.is_err());
+
+        // Restore original value if it existed
+        if let Some(val) = original {
+            std::env::set_var("HTG_DATA_DIR", val);
+        }
+    }
+
+    #[test]
+    fn test_from_env_with_values() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Save original values
+        let orig_dir = std::env::var("HTG_DATA_DIR").ok();
+        let orig_size = std::env::var("HTG_CACHE_SIZE").ok();
+
+        // Set test values
+        std::env::set_var("HTG_DATA_DIR", temp_dir.path());
+        std::env::set_var("HTG_CACHE_SIZE", "50");
+
+        let builder = SrtmServiceBuilder::from_env().unwrap();
+        assert_eq!(builder.data_dir, temp_dir.path());
+        assert_eq!(builder.cache_size, 50);
+
+        // Restore original values
+        match orig_dir {
+            Some(v) => std::env::set_var("HTG_DATA_DIR", v),
+            None => std::env::remove_var("HTG_DATA_DIR"),
+        }
+        match orig_size {
+            Some(v) => std::env::set_var("HTG_CACHE_SIZE", v),
+            None => std::env::remove_var("HTG_CACHE_SIZE"),
+        }
+    }
+
+    #[test]
+    fn test_from_env_default_cache_size() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Save original values
+        let orig_dir = std::env::var("HTG_DATA_DIR").ok();
+        let orig_size = std::env::var("HTG_CACHE_SIZE").ok();
+
+        // Set only data dir, no cache size
+        std::env::set_var("HTG_DATA_DIR", temp_dir.path());
+        std::env::remove_var("HTG_CACHE_SIZE");
+
+        let builder = SrtmServiceBuilder::from_env().unwrap();
+        assert_eq!(builder.cache_size, 100); // Default value
+
+        // Restore original values
+        match orig_dir {
+            Some(v) => std::env::set_var("HTG_DATA_DIR", v),
+            None => std::env::remove_var("HTG_DATA_DIR"),
+        }
+        match orig_size {
+            Some(v) => std::env::set_var("HTG_CACHE_SIZE", v),
+            None => std::env::remove_var("HTG_CACHE_SIZE"),
+        }
     }
 }
