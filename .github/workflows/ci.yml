@@ -74,3 +74,51 @@ jobs:
           tags: htg-service:test
           cache-from: type=gha
           cache-to: type=gha,mode=max
+
+  benchmark:
+    name: Benchmarks
+    runs-on: ubuntu-latest
+    if: github.ref == 'refs/heads/main'
+    needs: [docker]
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+
+      - name: Install Python dependencies
+        run: pip install -r benchmarks/requirements.txt
+
+      - name: Create test tiles
+        run: python benchmarks/create_test_tiles.py --num-tiles 100
+
+      - name: Build Docker image
+        run: docker build -t htg-service .
+
+      - name: Start service
+        run: |
+          docker compose -f benchmarks/docker-compose.bench.yml up -d
+          sleep 10
+
+      - name: Wait for service to be healthy
+        run: |
+          for i in {1..30}; do
+            if curl -s http://localhost:8080/health | grep -q healthy; then
+              echo "Service is healthy"
+              exit 0
+            fi
+            echo "Waiting for service... (attempt $i)"
+            sleep 2
+          done
+          echo "Service failed to become healthy"
+          docker logs htg-bench
+          exit 1
+
+      - name: Run benchmarks
+        run: python benchmarks/benchmark.py --url http://localhost:8080 --container htg-bench
+
+      - name: Stop service
+        if: always()
+        run: docker compose -f benchmarks/docker-compose.bench.yml down

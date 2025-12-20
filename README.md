@@ -311,6 +311,67 @@ docker build -t htg-service .
 docker run -d -p 8080:8080 -v ./data/srtm:/data/srtm:ro htg-service
 ```
 
+## Benchmarks
+
+Run performance benchmarks to validate memory usage, latency, and throughput.
+
+### Prerequisites
+
+```bash
+pip install -r benchmarks/requirements.txt
+```
+
+### Running Benchmarks
+
+```bash
+# Create synthetic test tiles (100 SRTM3 tiles)
+python benchmarks/create_test_tiles.py --num-tiles 100
+
+# Start the service in Docker
+docker compose -f benchmarks/docker-compose.bench.yml up -d
+
+# Wait for service to start
+sleep 10
+
+# Run benchmarks
+python benchmarks/benchmark.py --url http://localhost:8080
+
+# Stop the service
+docker compose -f benchmarks/docker-compose.bench.yml down
+```
+
+### Expected Output
+
+```
+=== HTG Performance Benchmark ===
+
+Memory Usage:
+  Baseline:     12 MB
+  10 tiles:     42 MB
+  50 tiles:     78 MB
+  100 tiles:    95 MB PASS (target: <100MB)
+
+Latency (1000 requests):
+  Warm cache:   0.8ms (p50), 1.2ms (p95), 2.1ms (p99) PASS (target: <10ms)
+
+Throughput:
+  Single tile:  15,234 req/sec PASS (target: >1000)
+
+GeoJSON Batch:
+  10 points:    2ms
+  100 points:   12ms
+  1000 points:  89ms
+```
+
+### Performance Targets
+
+| Metric | Target | Description |
+|--------|--------|-------------|
+| Memory (100 tiles) | <100MB | With 100 SRTM3 tiles cached |
+| Cached latency | <10ms | Repeated queries to same tile |
+| Uncached latency | <50ms | First query to new tile |
+| Throughput | >1000 req/s | Sustained request rate |
+
 ## Contributing
 
 ### Workflow
