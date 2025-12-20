@@ -362,10 +362,16 @@ impl SrtmServiceBuilder {
     /// |----------|-------------|---------|
     /// | `HTG_DATA_DIR` | Directory containing .hgt files | Required |
     /// | `HTG_CACHE_SIZE` | Maximum tiles in cache | 100 |
-    /// | `HTG_DOWNLOAD_URL` | URL template for downloads* | None |
+    /// | `HTG_DOWNLOAD_SOURCE` | Named source: "ardupilot"* | None |
+    /// | `HTG_DOWNLOAD_URL` | URL template for custom downloads* | None |
     /// | `HTG_DOWNLOAD_GZIP` | Whether URL serves gzip files* | false |
     ///
     /// *Only used when `download` feature is enabled.
+    ///
+    /// # Named Sources
+    ///
+    /// - `ardupilot` or `ardupilot-srtm1` - ArduPilot SRTM1 (30m resolution, ~25MB/tile)
+    /// - `ardupilot-srtm3` - ArduPilot SRTM3 (90m resolution, ~2.8MB/tile)
     ///
     /// # URL Template Placeholders
     ///
@@ -374,14 +380,19 @@ impl SrtmServiceBuilder {
     /// - `{lat}` - Latitude digits (e.g., "35")
     /// - `{lon_prefix}` - E or W
     /// - `{lon}` - Longitude digits (e.g., "138")
+    /// - `{continent}` - Continent subdirectory (e.g., "Eurasia", "North_America")
     ///
     /// # Example
     ///
     /// ```bash
+    /// # Using ArduPilot source (recommended)
+    /// export HTG_DATA_DIR=/data/srtm
+    /// export HTG_DOWNLOAD_SOURCE=ardupilot
+    ///
+    /// # Or using custom URL template
     /// export HTG_DATA_DIR=/data/srtm
     /// export HTG_CACHE_SIZE=50
     /// export HTG_DOWNLOAD_URL="https://example.com/srtm/{filename}.hgt.gz"
-    /// export HTG_DOWNLOAD_GZIP=true
     /// ```
     ///
     /// ```ignore
@@ -408,27 +419,43 @@ impl SrtmServiceBuilder {
 
         #[cfg(feature = "download")]
         let download_config = {
-            match std::env::var("HTG_DOWNLOAD_URL") {
-                Ok(url_template) => {
-                    // Check for explicit compression setting, otherwise auto-detect from URL
-                    if let Ok(gzip_setting) = std::env::var("HTG_DOWNLOAD_GZIP") {
-                        let is_gzipped =
-                            gzip_setting.eq_ignore_ascii_case("true") || gzip_setting == "1";
-                        let compression = if is_gzipped {
-                            crate::download::Compression::Gzip
-                        } else {
-                            crate::download::Compression::None
-                        };
-                        Some(DownloadConfig::with_url_template_and_compression(
-                            url_template,
-                            compression,
-                        ))
-                    } else {
-                        Some(DownloadConfig::with_url_template(url_template))
+            // Check for named source first (e.g., "ardupilot")
+            if let Ok(source) = std::env::var("HTG_DOWNLOAD_SOURCE") {
+                match source.to_lowercase().as_str() {
+                    "ardupilot" | "ardupilot-srtm1" => Some(DownloadConfig::ardupilot_srtm1()),
+                    "ardupilot-srtm3" => Some(DownloadConfig::ardupilot_srtm3()),
+                    _ => {
+                        // Unknown source name, fall through to URL template
+                        None
                     }
                 }
-                Err(_) => None,
+            } else {
+                None
             }
+            .or_else(|| {
+                // Fall back to custom URL template
+                match std::env::var("HTG_DOWNLOAD_URL") {
+                    Ok(url_template) => {
+                        // Check for explicit compression setting, otherwise auto-detect from URL
+                        if let Ok(gzip_setting) = std::env::var("HTG_DOWNLOAD_GZIP") {
+                            let is_gzipped =
+                                gzip_setting.eq_ignore_ascii_case("true") || gzip_setting == "1";
+                            let compression = if is_gzipped {
+                                crate::download::Compression::Gzip
+                            } else {
+                                crate::download::Compression::None
+                            };
+                            Some(DownloadConfig::with_url_template_and_compression(
+                                url_template,
+                                compression,
+                            ))
+                        } else {
+                            Some(DownloadConfig::with_url_template(url_template))
+                        }
+                    }
+                    Err(_) => None,
+                }
+            })
         };
 
         Ok(Self {

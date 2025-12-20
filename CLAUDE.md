@@ -10,7 +10,7 @@ Building a high-performance, memory-efficient microservice to return elevation d
 ## Current Status
 
 **Phase:** All core phases complete (1-5)
-**Latest Features:** Bilinear interpolation, GeoJSON batch queries, auto-download
+**Latest Features:** Bilinear interpolation, GeoJSON batch queries, auto-download, ArduPilot source support
 
 ### Open Issues
 - #6: Publish htg library to crates.io
@@ -176,7 +176,8 @@ curl "http://localhost:8080/stats"
 | `HTG_DATA_DIR` | Directory containing .hgt files | Required |
 | `HTG_CACHE_SIZE` | Maximum tiles in LRU cache | 100 |
 | `HTG_PORT` | HTTP server port | 8080 |
-| `HTG_DOWNLOAD_URL` | URL template for auto-download (use `{filename}` placeholder) | None |
+| `HTG_DOWNLOAD_SOURCE` | Named source: "ardupilot", "ardupilot-srtm1", "ardupilot-srtm3" | None |
+| `HTG_DOWNLOAD_URL` | URL template for auto-download (use `{filename}`, `{continent}` placeholders) | None |
 | `HTG_DOWNLOAD_GZIP` | Whether downloads are gzipped | false |
 | `RUST_LOG` | Log level (e.g., "info", "debug", "htg_service=debug") | "info" |
 
@@ -337,7 +338,12 @@ docker-compose up
 ## Example Usage
 
 ```bash
-# Start service locally
+# Start service with ArduPilot auto-download (recommended)
+export HTG_DATA_DIR=/path/to/hgt/files
+export HTG_DOWNLOAD_SOURCE=ardupilot
+cargo run --release -p htg-service
+
+# Or start without auto-download (local files only)
 export HTG_DATA_DIR=/path/to/hgt/files
 export HTG_CACHE_SIZE=100
 cargo run --release -p htg-service

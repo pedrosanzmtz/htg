@@ -147,17 +147,33 @@ Cache statistics.
 | `HTG_DATA_DIR` | `.` | Directory containing `.hgt` files |
 | `HTG_CACHE_SIZE` | `100` | Maximum tiles in memory |
 | `HTG_PORT` | `8080` | HTTP server port |
+| `HTG_DOWNLOAD_SOURCE` | - | Named source: "ardupilot", "ardupilot-srtm1", "ardupilot-srtm3" |
 | `HTG_DOWNLOAD_URL` | - | URL template for auto-download (optional) |
 | `HTG_DOWNLOAD_GZIP` | `false` | Whether downloaded files are gzipped |
 | `RUST_LOG` | `info` | Log level (debug, info, warn, error) |
 
 ### Auto-Download Configuration
 
-To enable automatic downloading of missing tiles:
+#### Using ArduPilot (Recommended)
+
+The easiest way to enable auto-download is using the ArduPilot terrain server:
+
+```bash
+# SRTM1 - High resolution (30m, ~25MB/tile) - recommended
+export HTG_DOWNLOAD_SOURCE=ardupilot
+
+# SRTM3 - Lower resolution (90m, ~2.8MB/tile) - faster downloads
+export HTG_DOWNLOAD_SOURCE=ardupilot-srtm3
+```
+
+This automatically downloads tiles from `https://terrain.ardupilot.org/`.
+
+#### Using Custom URL Template
+
+For other data sources, use a custom URL template:
 
 ```bash
 export HTG_DOWNLOAD_URL="https://example.com/srtm/{filename}.hgt.gz"
-export HTG_DOWNLOAD_GZIP=true
 ```
 
 **URL Template Placeholders:**
@@ -166,6 +182,7 @@ export HTG_DOWNLOAD_GZIP=true
 - `{lat}` - Latitude digits (e.g., "35")
 - `{lon_prefix}` - E or W
 - `{lon}` - Longitude digits (e.g., "138")
+- `{continent}` - Continent subdirectory (e.g., "Eurasia", "North_America")
 
 ## Library Usage
 
@@ -189,7 +206,21 @@ let elevation = service.get_elevation(35.6762, 139.6503)?;
 println!("Elevation: {}m", elevation);
 ```
 
-### With Auto-Download
+### With Auto-Download (ArduPilot)
+
+```rust
+use htg::{SrtmServiceBuilder, download::DownloadConfig};
+
+let service = SrtmServiceBuilder::new("/data/srtm")
+    .cache_size(100)
+    .auto_download(DownloadConfig::ardupilot())
+    .build()?;
+
+// Will download N35E139.hgt from ArduPilot if not present locally
+let elevation = service.get_elevation(35.6762, 139.6503)?;
+```
+
+### With Custom URL Template
 
 ```rust
 use htg::{SrtmServiceBuilder, download::DownloadConfig};
@@ -198,7 +229,6 @@ let service = SrtmServiceBuilder::new("/data/srtm")
     .cache_size(100)
     .auto_download(DownloadConfig::with_url_template(
         "https://example.com/srtm/{filename}.hgt.gz",
-        true, // is gzipped
     ))
     .build()?;
 
