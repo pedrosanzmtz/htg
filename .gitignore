@@ -15,6 +15,7 @@ Thumbs.db
 *.hgt
 /data/
 /test_data/
+/srtm_data/
 
 # Environment
 .env
