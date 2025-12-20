@@ -130,7 +130,10 @@ impl SrtmTile {
         })
     }
 
-    /// Get the elevation at the specified coordinates.
+    /// Get the elevation at the specified coordinates using nearest-neighbor lookup.
+    ///
+    /// This method returns the elevation of the nearest grid point. For smoother
+    /// results with sub-pixel accuracy, use [`get_elevation_interpolated`].
     ///
     /// # Arguments
     ///
@@ -161,6 +164,87 @@ impl SrtmTile {
         let col = (lon_frac * (self.samples - 1) as f64).round() as usize;
 
         self.get_elevation_at(row, col)
+    }
+
+    /// Get the elevation at the specified coordinates using bilinear interpolation.
+    ///
+    /// This method interpolates between the 4 surrounding grid points for sub-pixel
+    /// accuracy. This typically provides smoother elevation profiles and reduces
+    /// quantization error by up to half the grid resolution (~15m for SRTM1, ~45m for SRTM3).
+    ///
+    /// # Arguments
+    ///
+    /// * `lat` - Latitude in decimal degrees
+    /// * `lon` - Longitude in decimal degrees
+    ///
+    /// # Returns
+    ///
+    /// The interpolated elevation in meters as a floating-point value.
+    /// Returns `None` if any of the surrounding grid points contains [`VOID_VALUE`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the coordinates are outside the tile bounds.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let tile = SrtmTile::from_file("N35E138.hgt")?;
+    ///
+    /// // Interpolated elevation (more accurate)
+    /// if let Some(elevation) = tile.get_elevation_interpolated(35.5, 138.5)? {
+    ///     println!("Interpolated elevation: {:.1}m", elevation);
+    /// }
+    ///
+    /// // Nearest-neighbor elevation (faster, less accurate)
+    /// let elevation = tile.get_elevation(35.5, 138.5)?;
+    /// println!("Nearest elevation: {}m", elevation);
+    /// ```
+    pub fn get_elevation_interpolated(&self, lat: f64, lon: f64) -> Result<Option<f64>> {
+        // Calculate fractional position within tile
+        let lat_frac = lat - lat.floor();
+        let lon_frac = lon - lon.floor();
+
+        // Validate bounds (should be 0.0 to 1.0)
+        if !(0.0..=1.0).contains(&lat_frac) || !(0.0..=1.0).contains(&lon_frac) {
+            return Err(SrtmError::OutOfBounds { lat, lon });
+        }
+
+        // Convert to continuous row/col position
+        // IMPORTANT: Rows are inverted - row 0 is the north edge (top of file)
+        let row_pos = (1.0 - lat_frac) * (self.samples - 1) as f64;
+        let col_pos = lon_frac * (self.samples - 1) as f64;
+
+        // Get integer indices for the 4 surrounding points
+        let row0 = row_pos.floor() as usize;
+        let col0 = col_pos.floor() as usize;
+        let row1 = (row0 + 1).min(self.samples - 1);
+        let col1 = (col0 + 1).min(self.samples - 1);
+
+        // Get fractional weights for interpolation
+        let row_weight = row_pos - row0 as f64;
+        let col_weight = col_pos - col0 as f64;
+
+        // Get the 4 surrounding elevation values
+        let v00 = self.get_elevation_at(row0, col0)?;
+        let v10 = self.get_elevation_at(row0, col1)?;
+        let v01 = self.get_elevation_at(row1, col0)?;
+        let v11 = self.get_elevation_at(row1, col1)?;
+
+        // Check for void values - if any surrounding point is void, return None
+        if v00 == VOID_VALUE || v10 == VOID_VALUE || v01 == VOID_VALUE || v11 == VOID_VALUE {
+            return Ok(None);
+        }
+
+        // Bilinear interpolation
+        // First interpolate horizontally along the top and bottom rows
+        let v0 = v00 as f64 + (v10 as f64 - v00 as f64) * col_weight;
+        let v1 = v01 as f64 + (v11 as f64 - v01 as f64) * col_weight;
+
+        // Then interpolate vertically between the two horizontal results
+        let elevation = v0 + (v1 - v0) * row_weight;
+
+        Ok(Some(elevation))
     }
 
     /// Get elevation at a specific row/column index.
@@ -293,5 +377,127 @@ mod tests {
         assert_eq!(SrtmResolution::Srtm3.samples(), 1201);
         assert_eq!(SrtmResolution::Srtm1.meters(), 30.0);
         assert_eq!(SrtmResolution::Srtm3.meters(), 90.0);
+    }
+
+    /// Create a test file with a 2x2 grid of known values for interpolation testing.
+    /// Sets values at rows 600-601, cols 600-601 to form a gradient.
+    fn create_interpolation_test_file() -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        let mut data = vec![0u8; SRTM3_SIZE];
+
+        // Create a 2x2 grid of values around the center:
+        // (row 600, col 600) = 100m  |  (row 600, col 601) = 200m
+        // (row 601, col 600) = 300m  |  (row 601, col 601) = 400m
+
+        let set_elevation = |data: &mut Vec<u8>, row: usize, col: usize, elev: i16| {
+            let offset = (row * SRTM3_SAMPLES + col) * 2;
+            let bytes = elev.to_be_bytes();
+            data[offset] = bytes[0];
+            data[offset + 1] = bytes[1];
+        };
+
+        set_elevation(&mut data, 600, 600, 100);
+        set_elevation(&mut data, 600, 601, 200);
+        set_elevation(&mut data, 601, 600, 300);
+        set_elevation(&mut data, 601, 601, 400);
+
+        file.write_all(&data).unwrap();
+        file
+    }
+
+    #[test]
+    fn test_interpolation_at_grid_points() {
+        let file = create_interpolation_test_file();
+        let tile = SrtmTile::from_file_with_coords(file.path(), 35, 138).unwrap();
+
+        // At exact grid points, interpolation should return exact values
+        // Row 600 corresponds to lat_frac = 0.5 (approximately)
+        // Col 600 corresponds to lon_frac = 0.5 (approximately)
+
+        // The center point (row 600, col 600) should be 100m
+        // lat = 35.0 + (1.0 - 600/1200) = 35.5
+        // lon = 138.0 + 600/1200 = 138.5
+        let elev = tile.get_elevation_interpolated(35.5, 138.5).unwrap();
+        assert!(elev.is_some());
+        // Should be close to 100m (the value at row 600, col 600)
+        let elev = elev.unwrap();
+        assert!((elev - 100.0).abs() < 1.0, "Expected ~100, got {}", elev);
+    }
+
+    #[test]
+    fn test_interpolation_midpoint() {
+        let file = create_interpolation_test_file();
+        let tile = SrtmTile::from_file_with_coords(file.path(), 35, 138).unwrap();
+
+        // At the midpoint between 4 grid values (100, 200, 300, 400),
+        // the interpolated value should be the average: 250
+
+        // Calculate coordinates for midpoint between rows 600-601 and cols 600-601
+        // row = 600.5 means lat_frac = 1.0 - 600.5/1200 = 0.49958...
+        // col = 600.5 means lon_frac = 600.5/1200 = 0.50041...
+        let lat = 35.0 + (1.0 - 600.5 / 1200.0);
+        let lon = 138.0 + 600.5 / 1200.0;
+
+        let elev = tile.get_elevation_interpolated(lat, lon).unwrap();
+        assert!(elev.is_some());
+        let elev = elev.unwrap();
+
+        // The average of 100, 200, 300, 400 is 250
+        assert!((elev - 250.0).abs() < 5.0, "Expected ~250, got {}", elev);
+    }
+
+    #[test]
+    fn test_interpolation_horizontal() {
+        let file = create_interpolation_test_file();
+        let tile = SrtmTile::from_file_with_coords(file.path(), 35, 138).unwrap();
+
+        // Test horizontal interpolation at row 600
+        // At row 600, col 600 = 100m, col 601 = 200m
+        // Midpoint should be 150m
+
+        let lat = 35.0 + (1.0 - 600.0 / 1200.0); // row 600
+        let lon = 138.0 + 600.5 / 1200.0; // between col 600 and 601
+
+        let elev = tile.get_elevation_interpolated(lat, lon).unwrap();
+        assert!(elev.is_some());
+        let elev = elev.unwrap();
+
+        // Horizontal interpolation between 100 and 200 should give ~150
+        assert!((elev - 150.0).abs() < 10.0, "Expected ~150, got {}", elev);
+    }
+
+    #[test]
+    fn test_interpolation_void_value() {
+        let mut file = NamedTempFile::new().unwrap();
+        let mut data = vec![0u8; SRTM3_SIZE];
+
+        // Set one corner to VOID_VALUE
+        let void_bytes = VOID_VALUE.to_be_bytes();
+        let offset = (600 * SRTM3_SAMPLES + 600) * 2;
+        data[offset] = void_bytes[0];
+        data[offset + 1] = void_bytes[1];
+
+        // Set other corners to valid values
+        let set_elevation = |data: &mut Vec<u8>, row: usize, col: usize, elev: i16| {
+            let offset = (row * SRTM3_SAMPLES + col) * 2;
+            let bytes = elev.to_be_bytes();
+            data[offset] = bytes[0];
+            data[offset + 1] = bytes[1];
+        };
+
+        set_elevation(&mut data, 600, 601, 200);
+        set_elevation(&mut data, 601, 600, 300);
+        set_elevation(&mut data, 601, 601, 400);
+
+        file.write_all(&data).unwrap();
+
+        let tile = SrtmTile::from_file_with_coords(file.path(), 35, 138).unwrap();
+
+        // Interpolation should return None when any corner is void
+        let lat = 35.0 + (1.0 - 600.5 / 1200.0);
+        let lon = 138.0 + 600.5 / 1200.0;
+
+        let elev = tile.get_elevation_interpolated(lat, lon).unwrap();
+        assert!(elev.is_none(), "Expected None for void area");
     }
 }
