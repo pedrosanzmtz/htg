@@ -1,0 +1,37 @@
+# Build artifacts
+target/
+**/*.rs.bk
+
+# IDE files
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# Git
+.git/
+.gitignore
+
+# Documentation
+*.md
+!README.md
+
+# Docker files (prevent recursive copies)
+Dockerfile*
+docker-compose*.yml
+.dockerignore
+
+# CI/CD
+.github/
+
+# Local data files
+*.hgt
+data/
+
+# Test files
+tests/
+**/tests/
+
+# Misc
+.DS_Store
+*.log
