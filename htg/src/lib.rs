@@ -6,11 +6,33 @@
 //! ## Features
 //!
 //! - **Fast**: Memory-mapped I/O for instant data access
-//! - **Memory Efficient**: Only loads tiles on demand
+//! - **Memory Efficient**: LRU cache limits memory usage
 //! - **Automatic Detection**: Determines tile resolution (SRTM1/SRTM3) from file size
 //! - **Offline**: Works with local `.hgt` files, no internet required
 //!
 //! ## Quick Start
+//!
+//! The easiest way to use htg is through [`SrtmService`], which handles tile
+//! loading and caching automatically:
+//!
+//! ```ignore
+//! use htg::SrtmService;
+//!
+//! // Create service with up to 100 cached tiles
+//! let service = SrtmService::new("/path/to/hgt/files", 100);
+//!
+//! // Query elevation - tile loading is automatic
+//! let elevation = service.get_elevation(35.6762, 139.6503)?; // Tokyo
+//! println!("Elevation: {}m", elevation);
+//!
+//! // Check cache performance
+//! let stats = service.cache_stats();
+//! println!("Cache hit rate: {:.1}%", stats.hit_rate() * 100.0);
+//! ```
+//!
+//! ## Low-Level API
+//!
+//! For more control, you can work with tiles directly:
 //!
 //! ```ignore
 //! use htg::{SrtmTile, filename};
@@ -22,7 +44,6 @@
 //! // Load the tile and query elevation
 //! let tile = SrtmTile::from_file(&format!("/data/{}", filename))?;
 //! let elevation = tile.get_elevation(35.5, 138.7)?;
-//! println!("Elevation: {}m", elevation);
 //! ```
 //!
 //! ## SRTM Data Format
@@ -43,8 +64,10 @@
 
 pub mod error;
 pub mod filename;
+pub mod service;
 pub mod tile;
 
 // Re-export main types at crate root for convenience
 pub use error::{Result, SrtmError};
+pub use service::{CacheStats, SrtmService};
 pub use tile::{SrtmResolution, SrtmTile, VOID_VALUE};
