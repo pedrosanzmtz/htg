@@ -20,6 +20,7 @@
 //! - `POST /elevation` - Batch elevation query with GeoJSON geometry
 //! - `GET /health` - Health check
 //! - `GET /stats` - Cache statistics
+//! - `GET /docs` - OpenAPI documentation (Swagger UI)
 
 mod handlers;
 
@@ -33,6 +34,41 @@ use tower_http::{
     trace::TraceLayer,
 };
 use tracing_subscriber::{layer::SubscriberExt, util::SubscriberInitExt};
+use utoipa::OpenApi;
+use utoipa_swagger_ui::SwaggerUi;
+
+/// OpenAPI documentation for the HTG service.
+#[derive(OpenApi)]
+#[openapi(
+    info(
+        title = "HTG Elevation Service",
+        version = "0.1.0",
+        description = "High-performance REST API for querying elevation data from SRTM files.",
+        license(name = "MIT", url = "https://opensource.org/licenses/MIT"),
+        contact(name = "Pedro Sanz Martinez", url = "https://github.com/pedrosanzmtz/htg")
+    ),
+    paths(
+        handlers::get_elevation,
+        handlers::post_elevation,
+        handlers::health_check,
+        handlers::get_stats,
+    ),
+    components(
+        schemas(
+            handlers::ElevationQuery,
+            handlers::ElevationResponse,
+            handlers::InterpolatedElevationResponse,
+            handlers::ErrorResponse,
+            handlers::HealthResponse,
+            handlers::StatsResponse,
+        )
+    ),
+    tags(
+        (name = "elevation", description = "Elevation query endpoints"),
+        (name = "system", description = "System and health endpoints")
+    )
+)]
+struct ApiDoc;
 
 /// Application state shared across handlers.
 pub struct AppState {
@@ -81,6 +117,7 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
 
     // Build router
     let app = Router::new()
+        .merge(SwaggerUi::new("/docs").url("/api-docs/openapi.json", ApiDoc::openapi()))
         .route(
             "/elevation",
             get(handlers::get_elevation).post(handlers::post_elevation),

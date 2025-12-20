@@ -15,6 +15,7 @@ Existing elevation services (e.g., Python/Flask) consume excessive memory (7GB+)
 - **Automatic Detection**: Determines correct tile from coordinates
 - **LRU Caching**: Configurable cache size to bound memory usage
 - **Docker Ready**: Easy deployment with Docker/Docker Compose
+- **OpenAPI Docs**: Interactive Swagger UI at `/docs`
 
 ## Project Structure
 
@@ -137,6 +138,14 @@ Cache statistics.
   "hit_rate": 0.956
 }
 ```
+
+### GET /docs
+
+Interactive OpenAPI documentation (Swagger UI).
+
+Open in browser: `http://localhost:8080/docs`
+
+The OpenAPI JSON spec is available at `/api-docs/openapi.json`.
 
 ## Configuration
 
