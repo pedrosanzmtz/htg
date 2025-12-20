@@ -22,13 +22,12 @@
 //! - `GET /stats` - Cache statistics
 //! - `GET /docs` - OpenAPI documentation (Swagger UI)
 
-mod handlers;
-
 use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{routing::get, Router};
 use htg::SrtmService;
+use htg_service::{handlers, AppState};
 use tower_http::{
     cors::{Any, CorsLayer},
     trace::TraceLayer,
@@ -69,12 +68,6 @@ use utoipa_swagger_ui::SwaggerUi;
     )
 )]
 struct ApiDoc;
-
-/// Application state shared across handlers.
-pub struct AppState {
-    /// SRTM service for elevation queries.
-    pub srtm_service: SrtmService,
-}
 
 #[tokio::main]
 async fn main() -> Result<(), Box<dyn std::error::Error>> {

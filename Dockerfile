@@ -3,28 +3,12 @@ FROM rust:1.83-bookworm AS builder
 
 WORKDIR /app
 
-# Copy manifests first for better caching
+# Copy everything needed for the build
 COPY Cargo.toml Cargo.lock ./
-COPY htg/Cargo.toml htg/Cargo.toml
-COPY htg-service/Cargo.toml htg-service/Cargo.toml
+COPY htg htg
+COPY htg-service htg-service
 
-# Create dummy source files to build dependencies
-RUN mkdir -p htg/src htg-service/src && \
-    echo "pub fn dummy() {}" > htg/src/lib.rs && \
-    echo "fn main() {}" > htg-service/src/main.rs
-
-# Build dependencies only (this layer will be cached)
-RUN cargo build --release -p htg-service && \
-    rm -rf htg/src htg-service/src
-
-# Copy actual source code
-COPY htg/src htg/src
-COPY htg-service/src htg-service/src
-
-# Touch files to update timestamps and rebuild
-RUN touch htg/src/lib.rs htg-service/src/main.rs
-
-# Build the actual application
+# Build the application
 RUN cargo build --release -p htg-service
 
 # Runtime stage

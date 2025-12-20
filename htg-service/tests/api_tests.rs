@@ -4,6 +4,7 @@ use axum::{routing::get, Router};
 use axum_test::TestServer;
 use geojson::{Geometry, Value as GeoJsonValue};
 use htg::SrtmService;
+use htg_service::{handlers, AppState};
 use serde_json::Value;
 use std::fs::File;
 use std::io::Write;
@@ -13,11 +14,6 @@ use tempfile::TempDir;
 /// File size for SRTM3 (1201 × 1201 × 2 bytes)
 const SRTM3_SIZE: usize = 1201 * 1201 * 2;
 const SRTM3_SAMPLES: usize = 1201;
-
-/// Application state shared across handlers.
-pub struct AppState {
-    pub srtm_service: SrtmService,
-}
 
 /// Create a test SRTM3 file with specified center elevation.
 fn create_test_tile(dir: &std::path::Path, filename: &str, center_elevation: i16) {
@@ -40,207 +36,15 @@ async fn create_test_server(temp_dir: &TempDir) -> TestServer {
     let state = Arc::new(AppState { srtm_service });
 
     let app = Router::new()
-        .route("/elevation", get(get_elevation).post(post_elevation))
-        .route("/health", get(health_check))
-        .route("/stats", get(get_stats))
+        .route(
+            "/elevation",
+            get(handlers::get_elevation).post(handlers::post_elevation),
+        )
+        .route("/health", get(handlers::health_check))
+        .route("/stats", get(handlers::get_stats))
         .with_state(state);
 
     TestServer::new(app).unwrap()
-}
-
-// Re-implement handlers for testing (since they're in the binary crate)
-use axum::{
-    extract::{Query, State},
-    http::StatusCode,
-    response::IntoResponse,
-    Json,
-};
-use serde::{Deserialize, Serialize};
-
-#[derive(Debug, Deserialize)]
-pub struct ElevationQuery {
-    pub lat: f64,
-    pub lon: f64,
-    #[serde(default)]
-    pub interpolate: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ElevationResponse {
-    pub elevation: i16,
-    pub lat: f64,
-    pub lon: f64,
-}
-
-#[derive(Debug, Serialize)]
-pub struct InterpolatedElevationResponse {
-    pub elevation: f64,
-    pub lat: f64,
-    pub lon: f64,
-    pub interpolated: bool,
-}
-
-#[derive(Debug, Serialize)]
-pub struct ErrorResponse {
-    pub error: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct HealthResponse {
-    pub status: String,
-    pub version: String,
-}
-
-#[derive(Debug, Serialize)]
-pub struct StatsResponse {
-    pub cached_tiles: u64,
-    pub cache_hits: u64,
-    pub cache_misses: u64,
-    pub hit_rate: f64,
-}
-
-async fn get_elevation(
-    State(state): State<Arc<AppState>>,
-    Query(query): Query<ElevationQuery>,
-) -> impl IntoResponse {
-    if query.interpolate {
-        match state
-            .srtm_service
-            .get_elevation_interpolated(query.lat, query.lon)
-        {
-            Ok(Some(elevation)) => (
-                StatusCode::OK,
-                Json(InterpolatedElevationResponse {
-                    elevation,
-                    lat: query.lat,
-                    lon: query.lon,
-                    interpolated: true,
-                }),
-            )
-                .into_response(),
-            Ok(None) => {
-                // Fall back to nearest neighbor
-                match state.srtm_service.get_elevation(query.lat, query.lon) {
-                    Ok(elevation) => (
-                        StatusCode::OK,
-                        Json(InterpolatedElevationResponse {
-                            elevation: elevation as f64,
-                            lat: query.lat,
-                            lon: query.lon,
-                            interpolated: false,
-                        }),
-                    )
-                        .into_response(),
-                    Err(e) => error_response(e),
-                }
-            }
-            Err(e) => error_response(e),
-        }
-    } else {
-        match state.srtm_service.get_elevation(query.lat, query.lon) {
-            Ok(elevation) => (
-                StatusCode::OK,
-                Json(ElevationResponse {
-                    elevation,
-                    lat: query.lat,
-                    lon: query.lon,
-                }),
-            )
-                .into_response(),
-            Err(e) => error_response(e),
-        }
-    }
-}
-
-fn error_response(e: htg::SrtmError) -> axum::response::Response {
-    let (status, message) = match &e {
-        htg::SrtmError::OutOfBounds { .. } => (StatusCode::BAD_REQUEST, e.to_string()),
-        htg::SrtmError::FileNotFound { .. } | htg::SrtmError::TileNotAvailable { .. } => {
-            (StatusCode::NOT_FOUND, e.to_string())
-        }
-        _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-    };
-    (status, Json(ErrorResponse { error: message })).into_response()
-}
-
-async fn health_check() -> Json<HealthResponse> {
-    Json(HealthResponse {
-        status: "healthy".to_string(),
-        version: env!("CARGO_PKG_VERSION").to_string(),
-    })
-}
-
-async fn get_stats(State(state): State<Arc<AppState>>) -> Json<StatsResponse> {
-    let stats = state.srtm_service.cache_stats();
-    Json(StatsResponse {
-        cached_tiles: stats.entry_count,
-        cache_hits: stats.hit_count,
-        cache_misses: stats.miss_count,
-        hit_rate: stats.hit_rate(),
-    })
-}
-
-async fn post_elevation(
-    State(state): State<Arc<AppState>>,
-    Json(geometry): Json<Geometry>,
-) -> impl IntoResponse {
-    match add_elevations_to_geometry(&state.srtm_service, geometry) {
-        Ok(result) => (StatusCode::OK, Json(result)).into_response(),
-        Err(e) => (StatusCode::BAD_REQUEST, Json(ErrorResponse { error: e })).into_response(),
-    }
-}
-
-fn add_elevations_to_geometry(
-    service: &htg::SrtmService,
-    geometry: Geometry,
-) -> Result<Geometry, String> {
-    let new_value = match geometry.value {
-        GeoJsonValue::Point(coord) => {
-            let elevated = add_elevation_to_coord(service, &coord)?;
-            GeoJsonValue::Point(elevated)
-        }
-        GeoJsonValue::MultiPoint(coords) => {
-            let elevated = add_elevation_to_coords(service, &coords)?;
-            GeoJsonValue::MultiPoint(elevated)
-        }
-        GeoJsonValue::LineString(coords) => {
-            let elevated = add_elevation_to_coords(service, &coords)?;
-            GeoJsonValue::LineString(elevated)
-        }
-        GeoJsonValue::MultiLineString(lines) => {
-            let elevated: Result<Vec<_>, _> = lines
-                .iter()
-                .map(|line| add_elevation_to_coords(service, line))
-                .collect();
-            GeoJsonValue::MultiLineString(elevated?)
-        }
-        _ => return Err("Unsupported geometry type".to_string()),
-    };
-
-    Ok(Geometry::new(new_value))
-}
-
-fn add_elevation_to_coord(service: &htg::SrtmService, coord: &[f64]) -> Result<Vec<f64>, String> {
-    if coord.len() < 2 {
-        return Err("Coordinate must have at least 2 elements (lon, lat)".to_string());
-    }
-
-    let lon = coord[0];
-    let lat = coord[1];
-
-    let elevation = service.get_elevation(lat, lon).map_err(|e| e.to_string())?;
-
-    Ok(vec![lon, lat, elevation as f64])
-}
-
-fn add_elevation_to_coords(
-    service: &htg::SrtmService,
-    coords: &[Vec<f64>],
-) -> Result<Vec<Vec<f64>>, String> {
-    coords
-        .iter()
-        .map(|coord| add_elevation_to_coord(service, coord))
-        .collect()
 }
 
 #[tokio::test]
@@ -266,7 +70,7 @@ async fn test_elevation_endpoint_invalid_coordinates() {
 
     // Latitude out of range
     let response = server.get("/elevation?lat=91.0&lon=0.0").await;
-    response.assert_status(StatusCode::BAD_REQUEST);
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
     let json: Value = response.json();
     assert!(json["error"].as_str().unwrap().contains("out of bounds"));
 }
@@ -278,7 +82,7 @@ async fn test_elevation_endpoint_missing_tile() {
 
     // No tile file exists
     let response = server.get("/elevation?lat=50.0&lon=50.0").await;
-    response.assert_status(StatusCode::NOT_FOUND);
+    response.assert_status(axum::http::StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -332,15 +136,15 @@ async fn test_elevation_endpoint_missing_params() {
 
     // Missing lat parameter
     let response = server.get("/elevation?lon=138.5").await;
-    response.assert_status(StatusCode::BAD_REQUEST);
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
 
     // Missing lon parameter
     let response = server.get("/elevation?lat=35.5").await;
-    response.assert_status(StatusCode::BAD_REQUEST);
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
 
     // No parameters
     let response = server.get("/elevation").await;
-    response.assert_status(StatusCode::BAD_REQUEST);
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
 }
 
 #[tokio::test]
@@ -504,7 +308,7 @@ async fn test_geojson_missing_tile() {
 
     let response = server.post("/elevation").json(&geometry).await;
 
-    response.assert_status(StatusCode::BAD_REQUEST);
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
     let json: Value = response.json();
     assert!(json["error"].as_str().is_some());
 }
@@ -519,7 +323,7 @@ async fn test_geojson_invalid_coordinates() {
 
     let response = server.post("/elevation").json(&geometry).await;
 
-    response.assert_status(StatusCode::BAD_REQUEST);
+    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
     let json: Value = response.json();
     assert!(json["error"].as_str().unwrap().contains("out of bounds"));
 }
