@@ -60,6 +60,8 @@ use serde::{Deserialize, Serialize};
 pub struct ElevationQuery {
     pub lat: f64,
     pub lon: f64,
+    #[serde(default)]
+    pub interpolate: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -67,6 +69,14 @@ pub struct ElevationResponse {
     pub elevation: i16,
     pub lat: f64,
     pub lon: f64,
+}
+
+#[derive(Debug, Serialize)]
+pub struct InterpolatedElevationResponse {
+    pub elevation: f64,
+    pub lat: f64,
+    pub lon: f64,
+    pub interpolated: bool,
 }
 
 #[derive(Debug, Serialize)]
@@ -92,27 +102,64 @@ async fn get_elevation(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ElevationQuery>,
 ) -> impl IntoResponse {
-    match state.srtm_service.get_elevation(query.lat, query.lon) {
-        Ok(elevation) => (
-            StatusCode::OK,
-            Json(ElevationResponse {
-                elevation,
-                lat: query.lat,
-                lon: query.lon,
-            }),
-        )
-            .into_response(),
-        Err(e) => {
-            let (status, message) = match &e {
-                htg::SrtmError::OutOfBounds { .. } => (StatusCode::BAD_REQUEST, e.to_string()),
-                htg::SrtmError::FileNotFound { .. } | htg::SrtmError::TileNotAvailable { .. } => {
-                    (StatusCode::NOT_FOUND, e.to_string())
+    if query.interpolate {
+        match state
+            .srtm_service
+            .get_elevation_interpolated(query.lat, query.lon)
+        {
+            Ok(Some(elevation)) => (
+                StatusCode::OK,
+                Json(InterpolatedElevationResponse {
+                    elevation,
+                    lat: query.lat,
+                    lon: query.lon,
+                    interpolated: true,
+                }),
+            )
+                .into_response(),
+            Ok(None) => {
+                // Fall back to nearest neighbor
+                match state.srtm_service.get_elevation(query.lat, query.lon) {
+                    Ok(elevation) => (
+                        StatusCode::OK,
+                        Json(InterpolatedElevationResponse {
+                            elevation: elevation as f64,
+                            lat: query.lat,
+                            lon: query.lon,
+                            interpolated: false,
+                        }),
+                    )
+                        .into_response(),
+                    Err(e) => error_response(e),
                 }
-                _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-            };
-            (status, Json(ErrorResponse { error: message })).into_response()
+            }
+            Err(e) => error_response(e),
+        }
+    } else {
+        match state.srtm_service.get_elevation(query.lat, query.lon) {
+            Ok(elevation) => (
+                StatusCode::OK,
+                Json(ElevationResponse {
+                    elevation,
+                    lat: query.lat,
+                    lon: query.lon,
+                }),
+            )
+                .into_response(),
+            Err(e) => error_response(e),
         }
     }
+}
+
+fn error_response(e: htg::SrtmError) -> axum::response::Response {
+    let (status, message) = match &e {
+        htg::SrtmError::OutOfBounds { .. } => (StatusCode::BAD_REQUEST, e.to_string()),
+        htg::SrtmError::FileNotFound { .. } | htg::SrtmError::TileNotAvailable { .. } => {
+            (StatusCode::NOT_FOUND, e.to_string())
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+    (status, Json(ErrorResponse { error: message })).into_response()
 }
 
 async fn health_check() -> Json<HealthResponse> {
@@ -230,4 +277,44 @@ async fn test_elevation_endpoint_missing_params() {
     // No parameters
     let response = server.get("/elevation").await;
     response.assert_status(StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn test_elevation_endpoint_interpolation() {
+    let temp_dir = TempDir::new().unwrap();
+    create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+    let server = create_test_server(&temp_dir).await;
+
+    // Test with interpolation enabled
+    let response = server
+        .get("/elevation?lat=35.5&lon=138.5&interpolate=true")
+        .await;
+
+    response.assert_status_ok();
+    let json: Value = response.json();
+
+    // Should have floating-point elevation and interpolated flag
+    assert!(json["elevation"].is_f64() || json["elevation"].is_i64());
+    assert_eq!(json["lat"], 35.5);
+    assert_eq!(json["lon"], 138.5);
+    assert!(json["interpolated"].is_boolean());
+}
+
+#[tokio::test]
+async fn test_elevation_endpoint_no_interpolation() {
+    let temp_dir = TempDir::new().unwrap();
+    create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+    let server = create_test_server(&temp_dir).await;
+
+    // Test without interpolation (default)
+    let response = server.get("/elevation?lat=35.5&lon=138.5").await;
+
+    response.assert_status_ok();
+    let json: Value = response.json();
+
+    // Should have integer elevation and no interpolated flag
+    assert_eq!(json["elevation"], 500);
+    assert!(json.get("interpolated").is_none());
 }

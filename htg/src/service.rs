@@ -154,10 +154,12 @@ impl SrtmService {
         SrtmServiceBuilder::new(data_dir)
     }
 
-    /// Get elevation for the given coordinates.
+    /// Get elevation for the given coordinates using nearest-neighbor lookup.
     ///
     /// This method automatically determines which tile to load, loads it from
     /// disk (or cache), and returns the elevation at the specified location.
+    ///
+    /// For smoother results with sub-pixel accuracy, use [`get_elevation_interpolated`].
     ///
     /// # Arguments
     ///
@@ -178,6 +180,41 @@ impl SrtmService {
     /// println!("Elevation: {}m", elevation);
     /// ```
     pub fn get_elevation(&self, lat: f64, lon: f64) -> Result<i16> {
+        let tile = self.load_tile_for_coords(lat, lon)?;
+        tile.get_elevation(lat, lon)
+    }
+
+    /// Get elevation for the given coordinates using bilinear interpolation.
+    ///
+    /// This method interpolates between the 4 surrounding grid points for sub-pixel
+    /// accuracy. This provides smoother elevation profiles and reduces quantization
+    /// error by up to half the grid resolution (~15m for SRTM1, ~45m for SRTM3).
+    ///
+    /// # Arguments
+    ///
+    /// * `lat` - Latitude in decimal degrees (-60 to 60)
+    /// * `lon` - Longitude in decimal degrees (-180 to 180)
+    ///
+    /// # Returns
+    ///
+    /// The interpolated elevation in meters as a floating-point value.
+    /// Returns `None` if any of the surrounding grid points contains void data.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// // Interpolated elevation (more accurate)
+    /// if let Some(elevation) = service.get_elevation_interpolated(35.6762, 139.6503)? {
+    ///     println!("Interpolated elevation: {:.1}m", elevation);
+    /// }
+    /// ```
+    pub fn get_elevation_interpolated(&self, lat: f64, lon: f64) -> Result<Option<f64>> {
+        let tile = self.load_tile_for_coords(lat, lon)?;
+        tile.get_elevation_interpolated(lat, lon)
+    }
+
+    /// Validate coordinates and load the appropriate tile.
+    fn load_tile_for_coords(&self, lat: f64, lon: f64) -> Result<Arc<SrtmTile>> {
         // Validate coordinates
         if !(-60.0..=60.0).contains(&lat) {
             return Err(SrtmError::OutOfBounds { lat, lon });
@@ -190,10 +227,7 @@ impl SrtmService {
         let filename = lat_lon_to_filename(lat, lon);
 
         // Load tile (from cache or disk)
-        let tile = self.load_tile(&filename)?;
-
-        // Extract elevation from tile
-        tile.get_elevation(lat, lon)
+        self.load_tile(&filename)
     }
 
     /// Load a tile from cache, disk, or download if enabled.

@@ -18,17 +18,35 @@ pub struct ElevationQuery {
     pub lat: f64,
     /// Longitude in decimal degrees (-180 to 180).
     pub lon: f64,
+    /// Whether to use bilinear interpolation for sub-pixel accuracy.
+    /// When true, returns a floating-point elevation value.
+    /// Default is false (nearest-neighbor lookup).
+    #[serde(default)]
+    pub interpolate: bool,
 }
 
 /// Successful elevation response.
 #[derive(Debug, Serialize)]
 pub struct ElevationResponse {
-    /// Elevation in meters.
+    /// Elevation in meters (integer, nearest-neighbor lookup).
     pub elevation: i16,
     /// Latitude queried.
     pub lat: f64,
     /// Longitude queried.
     pub lon: f64,
+}
+
+/// Successful interpolated elevation response.
+#[derive(Debug, Serialize)]
+pub struct InterpolatedElevationResponse {
+    /// Elevation in meters (floating-point, bilinear interpolation).
+    pub elevation: f64,
+    /// Latitude queried.
+    pub lat: f64,
+    /// Longitude queried.
+    pub lon: f64,
+    /// Whether interpolation was used.
+    pub interpolated: bool,
 }
 
 /// Error response.
@@ -66,6 +84,7 @@ pub struct StatsResponse {
 ///
 /// - `lat`: Latitude in decimal degrees (-60 to 60)
 /// - `lon`: Longitude in decimal degrees (-180 to 180)
+/// - `interpolate`: Optional boolean to enable bilinear interpolation (default: false)
 ///
 /// # Returns
 ///
@@ -78,45 +97,103 @@ pub async fn get_elevation(
     State(state): State<Arc<AppState>>,
     Query(query): Query<ElevationQuery>,
 ) -> impl IntoResponse {
-    tracing::debug!(lat = query.lat, lon = query.lon, "Elevation query");
+    tracing::debug!(
+        lat = query.lat,
+        lon = query.lon,
+        interpolate = query.interpolate,
+        "Elevation query"
+    );
 
-    match state.srtm_service.get_elevation(query.lat, query.lon) {
-        Ok(elevation) => {
-            tracing::info!(
-                lat = query.lat,
-                lon = query.lon,
-                elevation = elevation,
-                "Elevation found"
-            );
-            (
-                StatusCode::OK,
-                Json(ElevationResponse {
-                    elevation,
-                    lat: query.lat,
-                    lon: query.lon,
-                }),
-            )
-                .into_response()
-        }
-        Err(e) => {
-            let (status, message) = match &e {
-                htg::SrtmError::OutOfBounds { .. } => (StatusCode::BAD_REQUEST, e.to_string()),
-                htg::SrtmError::FileNotFound { .. } | htg::SrtmError::TileNotAvailable { .. } => {
-                    (StatusCode::NOT_FOUND, e.to_string())
+    if query.interpolate {
+        // Use bilinear interpolation
+        match state
+            .srtm_service
+            .get_elevation_interpolated(query.lat, query.lon)
+        {
+            Ok(Some(elevation)) => {
+                tracing::info!(
+                    lat = query.lat,
+                    lon = query.lon,
+                    elevation = elevation,
+                    interpolated = true,
+                    "Elevation found"
+                );
+                (
+                    StatusCode::OK,
+                    Json(InterpolatedElevationResponse {
+                        elevation,
+                        lat: query.lat,
+                        lon: query.lon,
+                        interpolated: true,
+                    }),
+                )
+                    .into_response()
+            }
+            Ok(None) => {
+                // Void value in interpolation area - fall back to nearest neighbor
+                match state.srtm_service.get_elevation(query.lat, query.lon) {
+                    Ok(elevation) => {
+                        tracing::info!(
+                            lat = query.lat,
+                            lon = query.lon,
+                            elevation = elevation,
+                            interpolated = false,
+                            "Elevation found (void in interpolation area, using nearest)"
+                        );
+                        (
+                            StatusCode::OK,
+                            Json(InterpolatedElevationResponse {
+                                elevation: elevation as f64,
+                                lat: query.lat,
+                                lon: query.lon,
+                                interpolated: false,
+                            }),
+                        )
+                            .into_response()
+                    }
+                    Err(e) => error_response(query.lat, query.lon, e),
                 }
-                _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
-            };
-
-            tracing::warn!(
-                lat = query.lat,
-                lon = query.lon,
-                error = %e,
-                "Elevation query failed"
-            );
-
-            (status, Json(ErrorResponse { error: message })).into_response()
+            }
+            Err(e) => error_response(query.lat, query.lon, e),
+        }
+    } else {
+        // Use nearest-neighbor lookup
+        match state.srtm_service.get_elevation(query.lat, query.lon) {
+            Ok(elevation) => {
+                tracing::info!(
+                    lat = query.lat,
+                    lon = query.lon,
+                    elevation = elevation,
+                    "Elevation found"
+                );
+                (
+                    StatusCode::OK,
+                    Json(ElevationResponse {
+                        elevation,
+                        lat: query.lat,
+                        lon: query.lon,
+                    }),
+                )
+                    .into_response()
+            }
+            Err(e) => error_response(query.lat, query.lon, e),
         }
     }
+}
+
+/// Create an error response for elevation queries.
+fn error_response(lat: f64, lon: f64, e: htg::SrtmError) -> axum::response::Response {
+    let (status, message) = match &e {
+        htg::SrtmError::OutOfBounds { .. } => (StatusCode::BAD_REQUEST, e.to_string()),
+        htg::SrtmError::FileNotFound { .. } | htg::SrtmError::TileNotAvailable { .. } => {
+            (StatusCode::NOT_FOUND, e.to_string())
+        }
+        _ => (StatusCode::INTERNAL_SERVER_ERROR, e.to_string()),
+    };
+
+    tracing::warn!(lat = lat, lon = lon, error = %e, "Elevation query failed");
+
+    (status, Json(ErrorResponse { error: message })).into_response()
 }
 
 /// Health check endpoint.
