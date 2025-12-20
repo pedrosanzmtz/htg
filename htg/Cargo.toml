@@ -1,0 +1,18 @@
+[package]
+name = "htg"
+version = "0.1.0"
+edition = "2021"
+authors = ["Pedro Sanz Martinez <pedrosanzmtz@users.noreply.github.com>"]
+description = "High-performance SRTM elevation data library"
+license = "MIT"
+repository = "https://github.com/pedrosanzmtz/htg"
+keywords = ["srtm", "elevation", "gis", "geography", "hgt"]
+categories = ["science::geo", "data-structures"]
+readme = "../README.md"
+
+[dependencies]
+memmap2 = "0.9"
+thiserror = "1.0"
+
+[dev-dependencies]
+tempfile = "3.8"
