@@ -11,6 +11,7 @@ Existing elevation services (e.g., Python/Flask) consume excessive memory (7GB+)
 - **Fast**: <10ms response time for cached tiles
 - **Memory Efficient**: <100MB with 100 cached tiles (vs 7GB in Python)
 - **Offline**: No internet required, works with local `.hgt` files
+- **Auto-Download**: Optional automatic tile download from configurable sources
 - **Automatic Detection**: Determines correct tile from coordinates
 - **LRU Caching**: Configurable cache size to bound memory usage
 - **Docker Ready**: Easy deployment with Docker/Docker Compose
@@ -21,47 +22,49 @@ This is a Cargo workspace with two crates:
 
 ```
 htg/
-├── htg/              # Library crate (published to crates.io)
+├── htg/              # Library crate (publish to crates.io)
 │   └── src/
 │       ├── lib.rs
 │       ├── tile.rs       # SRTM tile parsing
 │       ├── filename.rs   # Coordinate → filename conversion
 │       ├── service.rs    # Caching service
+│       ├── download.rs   # Auto-download functionality
 │       └── error.rs      # Error types
 │
-└── htg-service/      # Binary crate (published to DockerHub)
+└── htg-service/      # Binary crate (publish to DockerHub)
     └── src/
         ├── main.rs       # Axum HTTP server
         └── handlers.rs   # API handlers
 ```
 
-## Installation
+## Quick Start
 
-### As a Library (from crates.io)
-
-```toml
-[dependencies]
-htg = "0.1"
-```
-
-```rust
-use htg::SrtmService;
-
-let service = SrtmService::new("/path/to/hgt/files", 100);
-let elevation = service.get_elevation(19.4326, -99.1332)?;
-println!("Elevation: {}m", elevation);
-```
-
-### As a Service (from DockerHub)
+### Using Docker (Recommended)
 
 ```bash
-docker pull pedrosanzmtz/htg-service:latest
+# Clone the repository
+git clone https://github.com/pedrosanzmtz/htg.git
+cd htg
 
+# Create data directory and add .hgt files
+mkdir -p data/srtm
+# Copy your .hgt files to data/srtm/
+
+# Run with Docker Compose
+docker compose up -d
+
+# Test it
+curl "http://localhost:8080/elevation?lat=35.6762&lon=139.6503"
+```
+
+### Using Docker Hub
+
+```bash
 docker run -d \
   -p 8080:8080 \
-  -v /path/to/hgt/files:/data:ro \
-  -e DATA_DIR=/data \
-  -e CACHE_SIZE=100 \
+  -v /path/to/hgt/files:/data/srtm:ro \
+  -e HTG_DATA_DIR=/data/srtm \
+  -e HTG_CACHE_SIZE=100 \
   pedrosanzmtz/htg-service:latest
 ```
 
@@ -72,7 +75,7 @@ git clone https://github.com/pedrosanzmtz/htg.git
 cd htg
 
 # Run the service
-DATA_DIR=./data CACHE_SIZE=100 cargo run -p htg-service --release
+HTG_DATA_DIR=./data/srtm cargo run -p htg-service --release
 ```
 
 ## API Endpoints
@@ -81,16 +84,31 @@ DATA_DIR=./data CACHE_SIZE=100 cargo run -p htg-service --release
 
 Query elevation for coordinates.
 
+**Request:**
 ```bash
-curl "http://localhost:8080/elevation?lat=19.4326&lon=-99.1332"
+curl "http://localhost:8080/elevation?lat=35.6762&lon=139.6503"
 ```
 
-**Response:**
+**Response (200 OK):**
 ```json
 {
-  "latitude": 19.4326,
-  "longitude": -99.1332,
-  "elevation": 2240
+  "elevation": 40,
+  "lat": 35.6762,
+  "lon": 139.6503
+}
+```
+
+**Error Response (400 Bad Request):**
+```json
+{
+  "error": "Coordinates out of bounds: lat=91, lon=0 (valid: lat ±60°, lon ±180°)"
+}
+```
+
+**Error Response (404 Not Found):**
+```json
+{
+  "error": "Tile not available: N35E139.hgt (not found locally, auto-download disabled)"
 }
 ```
 
@@ -98,13 +116,22 @@ curl "http://localhost:8080/elevation?lat=19.4326&lon=-99.1332"
 
 Health check endpoint.
 
+**Response:**
+```json
+{
+  "status": "healthy",
+  "version": "0.1.0"
+}
+```
+
 ### GET /stats
 
 Cache statistics.
 
+**Response:**
 ```json
 {
-  "cache_entries": 45,
+  "cached_tiles": 45,
   "cache_hits": 1234,
   "cache_misses": 56,
   "hit_rate": 0.956
@@ -113,20 +140,97 @@ Cache statistics.
 
 ## Configuration
 
+### Environment Variables
+
 | Variable | Default | Description |
 |----------|---------|-------------|
-| `DATA_DIR` | `./data` | Directory containing `.hgt` files |
-| `CACHE_SIZE` | `100` | Maximum tiles in memory |
-| `PORT` | `8080` | HTTP server port |
-| `RUST_LOG` | `info` | Log level |
+| `HTG_DATA_DIR` | `.` | Directory containing `.hgt` files |
+| `HTG_CACHE_SIZE` | `100` | Maximum tiles in memory |
+| `HTG_PORT` | `8080` | HTTP server port |
+| `HTG_DOWNLOAD_URL` | - | URL template for auto-download (optional) |
+| `HTG_DOWNLOAD_GZIP` | `false` | Whether downloaded files are gzipped |
+| `RUST_LOG` | `info` | Log level (debug, info, warn, error) |
+
+### Auto-Download Configuration
+
+To enable automatic downloading of missing tiles:
+
+```bash
+export HTG_DOWNLOAD_URL="https://example.com/srtm/{filename}.hgt.gz"
+export HTG_DOWNLOAD_GZIP=true
+```
+
+**URL Template Placeholders:**
+- `{filename}` - Full filename (e.g., "N35E138")
+- `{lat_prefix}` - N or S
+- `{lat}` - Latitude digits (e.g., "35")
+- `{lon_prefix}` - E or W
+- `{lon}` - Longitude digits (e.g., "138")
+
+## Library Usage
+
+Add to your `Cargo.toml`:
+
+```toml
+[dependencies]
+htg = "0.1"
+
+# With auto-download support
+htg = { version = "0.1", features = ["download"] }
+```
+
+### Basic Usage
+
+```rust
+use htg::SrtmService;
+
+let service = SrtmService::new("/path/to/hgt/files", 100);
+let elevation = service.get_elevation(35.6762, 139.6503)?;
+println!("Elevation: {}m", elevation);
+```
+
+### With Auto-Download
+
+```rust
+use htg::{SrtmServiceBuilder, download::DownloadConfig};
+
+let service = SrtmServiceBuilder::new("/data/srtm")
+    .cache_size(100)
+    .auto_download(DownloadConfig::with_url_template(
+        "https://example.com/srtm/{filename}.hgt.gz",
+        true, // is gzipped
+    ))
+    .build()?;
+
+// Will download N35E139.hgt if not present locally
+let elevation = service.get_elevation(35.6762, 139.6503)?;
+```
+
+### From Environment Variables
+
+```rust
+use htg::SrtmServiceBuilder;
+
+let service = SrtmServiceBuilder::from_env()?.build()?;
+let elevation = service.get_elevation(35.6762, 139.6503)?;
+```
 
 ## SRTM Data
 
-Download `.hgt` files from:
-- https://dwtkns.com/srtm30m/
-- https://earthexplorer.usgs.gov/
+### Data Format
 
-Place files in your `DATA_DIR`. Filename format: `N19W100.hgt` (latitude/longitude).
+- **SRTM1**: 3601×3601 samples, 1 arc-second (~30m) resolution, ~25MB per tile
+- **SRTM3**: 1201×1201 samples, 3 arc-second (~90m) resolution, ~2.8MB per tile
+- **Coverage**: ±60° latitude globally
+- **Filename**: `N35E138.hgt` (latitude prefix + latitude + longitude prefix + longitude)
+
+### Download Sources
+
+- [SRTM Tile Grabber](https://dwtkns.com/srtm30m/) - Interactive map to download tiles
+- [USGS Earth Explorer](https://earthexplorer.usgs.gov/) - Official source
+- [OpenTopography](https://opentopography.org/) - Academic/research access
+
+Place downloaded `.hgt` files in your `HTG_DATA_DIR` directory.
 
 ## Performance
 
@@ -138,6 +242,45 @@ Place files in your `DATA_DIR`. Filename format: `N19W100.hgt` (latitude/longitu
 | Uncached response | <50ms |
 | Throughput | >10,000 req/s |
 
+## Development
+
+### Prerequisites
+
+- Rust 1.75 or later
+- Docker (optional, for containerized deployment)
+
+### Commands
+
+```bash
+# Run tests
+cargo test --workspace
+
+# Run tests with download feature
+cargo test --workspace --features download
+
+# Format code
+cargo fmt --all
+
+# Run clippy
+cargo clippy --workspace -- -D warnings
+
+# Build release
+cargo build --release -p htg-service
+
+# Run service locally
+HTG_DATA_DIR=./data/srtm cargo run -p htg-service
+```
+
+### Docker Build
+
+```bash
+# Build image
+docker build -t htg-service .
+
+# Run container
+docker run -d -p 8080:8080 -v ./data/srtm:/data/srtm:ro htg-service
+```
+
 ## Contributing
 
 ### Workflow
@@ -146,7 +289,7 @@ Place files in your `DATA_DIR`. Filename format: `N19W100.hgt` (latitude/longitu
 2. **Create a branch** from `main`: `git checkout -b feature/issue-number-description`
 3. **Make changes** and commit with descriptive messages
 4. **Open a Pull Request** linked to the issue
-5. **Request review** and address feedback
+5. **Wait for CI** - all checks must pass
 6. **Merge** after approval
 
 ### Rules
@@ -157,33 +300,17 @@ Place files in your `DATA_DIR`. Filename format: `N19W100.hgt` (latitude/longitu
 - **Code must be formatted** with `cargo fmt`
 - **No clippy warnings** - run `cargo clippy`
 
-### Development
-
-```bash
-# Run tests
-cargo test
-
-# Format code
-cargo fmt
-
-# Run clippy
-cargo clippy -- -D warnings
-
-# Run service locally
-DATA_DIR=./test_data cargo run -p htg-service
-```
-
 ## Roadmap
-
-See [ROADMAP.md](ROADMAP.md) for detailed implementation phases.
 
 | Phase | Component | Status |
 |-------|-----------|--------|
-| 1 | Core Tile Parser | Pending |
-| 2 | Filename Detection | Pending |
-| 3 | Caching Layer | Pending |
-| 4 | HTTP API | Pending |
-| 5 | Production Ready | Pending |
+| 1 | Core Tile Parser | ✅ Complete |
+| 2 | Filename Detection | ✅ Complete |
+| 3 | Caching Layer | ✅ Complete |
+| 4 | HTTP API | ✅ Complete |
+| 5 | Production Ready | ✅ Complete |
+| 6 | Publish to crates.io | 🔄 Pending |
+| 7 | Publish to DockerHub | 🔄 Pending |
 
 ## License
 

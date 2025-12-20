@@ -58,3 +58,19 @@ jobs:
         run: cargo build --workspace --release
       - name: Build (download feature)
         run: cargo build --workspace --release --features download
+
+  docker:
+    name: Docker Build
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@v3
+      - name: Build Docker image
+        uses: docker/build-push-action@v6
+        with:
+          context: .
+          push: false
+          tags: htg-service:test
+          cache-from: type=gha
+          cache-to: type=gha,mode=max
