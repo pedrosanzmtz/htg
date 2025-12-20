@@ -9,6 +9,7 @@
 //! | `HTG_DATA_DIR` | Directory containing .hgt files | Required |
 //! | `HTG_CACHE_SIZE` | Maximum tiles in cache | 100 |
 //! | `HTG_PORT` | HTTP server port | 8080 |
+//! | `HTG_DOWNLOAD_SOURCE` | Named source: "ardupilot", "ardupilot-srtm1", "ardupilot-srtm3" | None |
 //! | `HTG_DOWNLOAD_URL` | URL template for auto-download | None |
 //! | `HTG_DOWNLOAD_GZIP` | Whether downloads are gzipped | false |
 //! | `RUST_LOG` | Log level (e.g., "info", "debug") | "info" |
@@ -113,7 +114,33 @@ fn build_srtm_service(
 ) -> Result<SrtmService, Box<dyn std::error::Error>> {
     let mut builder = htg::SrtmServiceBuilder::new(data_dir).cache_size(cache_size);
 
-    // Check for download configuration
+    // Check for named source first (e.g., "ardupilot")
+    if let Ok(source) = std::env::var("HTG_DOWNLOAD_SOURCE") {
+        let config = match source.to_lowercase().as_str() {
+            "ardupilot" | "ardupilot-srtm1" => {
+                tracing::info!("Auto-download enabled (ArduPilot SRTM1 - 30m resolution)");
+                Some(htg::download::DownloadConfig::ardupilot_srtm1())
+            }
+            "ardupilot-srtm3" => {
+                tracing::info!("Auto-download enabled (ArduPilot SRTM3 - 90m resolution)");
+                Some(htg::download::DownloadConfig::ardupilot_srtm3())
+            }
+            _ => {
+                tracing::warn!(
+                    source = %source,
+                    "Unknown download source, falling back to URL template"
+                );
+                None
+            }
+        };
+
+        if let Some(config) = config {
+            builder = builder.auto_download(config);
+            return Ok(builder.build()?);
+        }
+    }
+
+    // Fall back to custom URL template
     if let Ok(url_template) = std::env::var("HTG_DOWNLOAD_URL") {
         // Check for explicit compression setting, otherwise auto-detect from URL
         let config = if let Ok(gzip_setting) = std::env::var("HTG_DOWNLOAD_GZIP") {
