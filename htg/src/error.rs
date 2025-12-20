@@ -18,9 +18,23 @@ pub enum SrtmError {
     #[error("Coordinates out of bounds: lat={lat}, lon={lon} (valid: lat ±60°, lon ±180°)")]
     OutOfBounds { lat: f64, lon: f64 },
 
-    /// The required .hgt file was not found.
+    /// The required .hgt file was not found locally.
     #[error("SRTM file not found: {path}")]
     FileNotFound { path: PathBuf },
+
+    /// Failed to download the SRTM tile.
+    #[cfg(feature = "download")]
+    #[error("Failed to download tile {filename}: {reason}")]
+    DownloadFailed { filename: String, reason: String },
+
+    /// HTTP request error during download.
+    #[cfg(feature = "download")]
+    #[error("HTTP error: {0}")]
+    HttpError(#[from] reqwest::Error),
+
+    /// Tile not available locally and auto-download is disabled.
+    #[error("Tile not available: {filename} (not found locally, auto-download disabled)")]
+    TileNotAvailable { filename: String },
 }
 
 /// Result type alias using [`SrtmError`].
