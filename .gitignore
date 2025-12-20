@@ -16,6 +16,12 @@ Thumbs.db
 /data/
 /test_data/
 /srtm_data/
+/benchmarks/test_tiles/
+/benchmarks/srtm_cache/
+
+# Python
+__pycache__/
+*.pyc
 
 # Environment
 .env
