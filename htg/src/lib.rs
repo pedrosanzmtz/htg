@@ -94,6 +94,9 @@
 #[cfg(feature = "download")]
 pub mod download;
 
+#[cfg(feature = "geojson")]
+pub mod geojson;
+
 pub mod error;
 pub mod filename;
 pub mod service;

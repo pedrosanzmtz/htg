@@ -35,6 +35,10 @@ pub enum SrtmError {
     /// Tile not available locally and auto-download is disabled.
     #[error("Tile not available: {filename} (not found locally, auto-download disabled)")]
     TileNotAvailable { filename: String },
+
+    /// Invalid coordinate format (e.g., too few elements).
+    #[error("Invalid coordinate: {message}")]
+    InvalidCoordinate { message: String },
 }
 
 /// Result type alias using [`SrtmError`].
