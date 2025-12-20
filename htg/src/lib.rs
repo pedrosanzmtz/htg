@@ -9,6 +9,7 @@
 //! - **Memory Efficient**: LRU cache limits memory usage
 //! - **Automatic Detection**: Determines tile resolution (SRTM1/SRTM3) from file size
 //! - **Offline**: Works with local `.hgt` files, no internet required
+//! - **Auto-Download** (optional): Download missing tiles automatically
 //!
 //! ## Quick Start
 //!
@@ -28,6 +29,30 @@
 //! // Check cache performance
 //! let stats = service.cache_stats();
 //! println!("Cache hit rate: {:.1}%", stats.hit_rate() * 100.0);
+//! ```
+//!
+//! ## Auto-Download Feature
+//!
+//! Enable the `download` feature to automatically download missing tiles:
+//!
+//! ```toml
+//! [dependencies]
+//! htg = { version = "0.1", features = ["download"] }
+//! ```
+//!
+//! ```ignore
+//! use htg::{SrtmServiceBuilder, download::DownloadConfig};
+//!
+//! let service = SrtmServiceBuilder::new("/data/srtm")
+//!     .cache_size(100)
+//!     .auto_download(DownloadConfig::with_url_template(
+//!         "https://example.com/srtm/{filename}.hgt.gz",
+//!         true, // is gzipped
+//!     ))
+//!     .build()?;
+//!
+//! // Will download N35E138.hgt if not present locally
+//! let elevation = service.get_elevation(35.5, 138.5)?;
 //! ```
 //!
 //! ## Low-Level API
@@ -62,6 +87,9 @@
 //! - <https://dwtkns.com/srtm30m/>
 //! - <https://earthexplorer.usgs.gov/>
 
+#[cfg(feature = "download")]
+pub mod download;
+
 pub mod error;
 pub mod filename;
 pub mod service;
@@ -69,5 +97,5 @@ pub mod tile;
 
 // Re-export main types at crate root for convenience
 pub use error::{Result, SrtmError};
-pub use service::{CacheStats, SrtmService};
+pub use service::{CacheStats, SrtmService, SrtmServiceBuilder};
 pub use tile::{SrtmResolution, SrtmTile, VOID_VALUE};

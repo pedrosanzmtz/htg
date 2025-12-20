@@ -2,6 +2,26 @@
 //!
 //! This module provides [`SrtmService`], a high-level interface for querying
 //! elevation data with automatic tile loading and caching.
+//!
+//! # Auto-Download Feature
+//!
+//! When compiled with the `download` feature, `SrtmService` can automatically
+//! download missing tiles from a configured data source.
+//!
+//! ```ignore
+//! use htg::{SrtmServiceBuilder, download::DownloadConfig};
+//!
+//! let service = SrtmServiceBuilder::new("/data/srtm")
+//!     .cache_size(100)
+//!     .auto_download(DownloadConfig::with_url_template(
+//!         "https://example.com/srtm/{filename}.hgt.gz",
+//!         true,
+//!     ))
+//!     .build()?;
+//!
+//! // Will download N35E138.hgt if not present locally
+//! let elevation = service.get_elevation(35.5, 138.5)?;
+//! ```
 
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -12,6 +32,9 @@ use moka::sync::Cache;
 use crate::error::{Result, SrtmError};
 use crate::filename::lat_lon_to_filename;
 use crate::tile::SrtmTile;
+
+#[cfg(feature = "download")]
+use crate::download::{DownloadConfig, Downloader};
 
 /// Statistics about cache usage.
 #[derive(Debug, Clone, Default)]
@@ -61,6 +84,20 @@ impl CacheStats {
 /// let stats = service.cache_stats();
 /// println!("Cache hit rate: {:.1}%", stats.hit_rate() * 100.0);
 /// ```
+///
+/// # Auto-Download (requires `download` feature)
+///
+/// ```ignore
+/// use htg::{SrtmServiceBuilder, download::DownloadConfig};
+///
+/// let service = SrtmServiceBuilder::new("/data/srtm")
+///     .cache_size(100)
+///     .auto_download(DownloadConfig::with_url_template(
+///         "https://example.com/srtm/{filename}.hgt.gz",
+///         true,
+///     ))
+///     .build()?;
+/// ```
 pub struct SrtmService {
     /// Directory containing .hgt files.
     data_dir: PathBuf,
@@ -70,6 +107,9 @@ pub struct SrtmService {
     hit_count: AtomicU64,
     /// Number of cache misses.
     miss_count: AtomicU64,
+    /// Optional downloader for auto-downloading missing tiles.
+    #[cfg(feature = "download")]
+    downloader: Option<Downloader>,
 }
 
 impl SrtmService {
@@ -94,7 +134,24 @@ impl SrtmService {
             tile_cache: Cache::builder().max_capacity(cache_size).build(),
             hit_count: AtomicU64::new(0),
             miss_count: AtomicU64::new(0),
+            #[cfg(feature = "download")]
+            downloader: None,
         }
+    }
+
+    /// Create a builder for more configuration options.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use htg::SrtmService;
+    ///
+    /// let service = SrtmService::builder("/data/srtm")
+    ///     .cache_size(100)
+    ///     .build();
+    /// ```
+    pub fn builder<P: AsRef<Path>>(data_dir: P) -> SrtmServiceBuilder {
+        SrtmServiceBuilder::new(data_dir)
     }
 
     /// Get elevation for the given coordinates.
@@ -139,7 +196,7 @@ impl SrtmService {
         tile.get_elevation(lat, lon)
     }
 
-    /// Load a tile from cache or disk.
+    /// Load a tile from cache, disk, or download if enabled.
     fn load_tile(&self, filename: &str) -> Result<Arc<SrtmTile>> {
         // Check cache first
         if let Some(tile) = self.tile_cache.get(filename) {
@@ -147,13 +204,29 @@ impl SrtmService {
             return Ok(tile);
         }
 
-        // Cache miss - load from disk
+        // Cache miss - try to load from disk or download
         self.miss_count.fetch_add(1, Ordering::Relaxed);
 
         let path = self.data_dir.join(filename);
 
+        // If file doesn't exist, try to download it
         if !path.exists() {
-            return Err(SrtmError::FileNotFound { path });
+            #[cfg(feature = "download")]
+            {
+                if let Some(ref downloader) = self.downloader {
+                    // Try to download the tile
+                    downloader.download_tile_by_name(filename, &self.data_dir)?;
+                } else {
+                    return Err(SrtmError::TileNotAvailable {
+                        filename: filename.to_string(),
+                    });
+                }
+            }
+
+            #[cfg(not(feature = "download"))]
+            {
+                return Err(SrtmError::FileNotFound { path });
+            }
         }
 
         // Parse base coordinates from filename for the tile
@@ -165,6 +238,12 @@ impl SrtmService {
         self.tile_cache.insert(filename.to_string(), tile.clone());
 
         Ok(tile)
+    }
+
+    /// Check if auto-download is enabled.
+    #[cfg(feature = "download")]
+    pub fn has_auto_download(&self) -> bool {
+        self.downloader.is_some()
     }
 
     /// Get cache statistics.
@@ -198,6 +277,194 @@ impl SrtmService {
     /// Clear all tiles from the cache.
     pub fn clear_cache(&self) {
         self.tile_cache.invalidate_all();
+    }
+}
+
+/// Builder for creating [`SrtmService`] with custom configuration.
+///
+/// # Example
+///
+/// ```ignore
+/// use htg::SrtmServiceBuilder;
+///
+/// let service = SrtmServiceBuilder::new("/data/srtm")
+///     .cache_size(100)
+///     .build();
+/// ```
+///
+/// # With Auto-Download (requires `download` feature)
+///
+/// ```ignore
+/// use htg::{SrtmServiceBuilder, download::DownloadConfig};
+///
+/// let service = SrtmServiceBuilder::new("/data/srtm")
+///     .cache_size(100)
+///     .auto_download(DownloadConfig::with_url_template(
+///         "https://example.com/srtm/{filename}.hgt.gz",
+///         true,
+///     ))
+///     .build()?;
+/// ```
+pub struct SrtmServiceBuilder {
+    data_dir: PathBuf,
+    cache_size: u64,
+    #[cfg(feature = "download")]
+    download_config: Option<DownloadConfig>,
+}
+
+impl SrtmServiceBuilder {
+    /// Create a new builder with the specified data directory.
+    pub fn new<P: AsRef<Path>>(data_dir: P) -> Self {
+        Self {
+            data_dir: data_dir.as_ref().to_path_buf(),
+            cache_size: 100, // Default cache size
+            #[cfg(feature = "download")]
+            download_config: None,
+        }
+    }
+
+    /// Create a builder configured from environment variables.
+    ///
+    /// # Environment Variables
+    ///
+    /// | Variable | Description | Default |
+    /// |----------|-------------|---------|
+    /// | `HTG_DATA_DIR` | Directory containing .hgt files | Required |
+    /// | `HTG_CACHE_SIZE` | Maximum tiles in cache | 100 |
+    /// | `HTG_DOWNLOAD_URL` | URL template for downloads* | None |
+    /// | `HTG_DOWNLOAD_GZIP` | Whether URL serves gzip files* | false |
+    ///
+    /// *Only used when `download` feature is enabled.
+    ///
+    /// # URL Template Placeholders
+    ///
+    /// - `{filename}` - Full filename (e.g., "N35E138")
+    /// - `{lat_prefix}` - N or S
+    /// - `{lat}` - Latitude digits (e.g., "35")
+    /// - `{lon_prefix}` - E or W
+    /// - `{lon}` - Longitude digits (e.g., "138")
+    ///
+    /// # Example
+    ///
+    /// ```bash
+    /// export HTG_DATA_DIR=/data/srtm
+    /// export HTG_CACHE_SIZE=50
+    /// export HTG_DOWNLOAD_URL="https://example.com/srtm/{filename}.hgt.gz"
+    /// export HTG_DOWNLOAD_GZIP=true
+    /// ```
+    ///
+    /// ```ignore
+    /// use htg::SrtmServiceBuilder;
+    ///
+    /// let service = SrtmServiceBuilder::from_env()?.build()?;
+    /// ```
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if `HTG_DATA_DIR` is not set.
+    pub fn from_env() -> Result<Self> {
+        let data_dir = std::env::var("HTG_DATA_DIR").map_err(|_| {
+            SrtmError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                "HTG_DATA_DIR environment variable not set",
+            ))
+        })?;
+
+        let cache_size: u64 = std::env::var("HTG_CACHE_SIZE")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(100);
+
+        #[cfg(feature = "download")]
+        let download_config = {
+            match std::env::var("HTG_DOWNLOAD_URL") {
+                Ok(url_template) => {
+                    let is_gzipped = std::env::var("HTG_DOWNLOAD_GZIP")
+                        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
+                        .unwrap_or(false);
+                    Some(DownloadConfig::with_url_template(url_template, is_gzipped))
+                }
+                Err(_) => None,
+            }
+        };
+
+        Ok(Self {
+            data_dir: PathBuf::from(data_dir),
+            cache_size,
+            #[cfg(feature = "download")]
+            download_config,
+        })
+    }
+
+    /// Set the data directory.
+    ///
+    /// Overrides the directory set in the constructor or from environment.
+    pub fn data_dir<P: AsRef<Path>>(mut self, path: P) -> Self {
+        self.data_dir = path.as_ref().to_path_buf();
+        self
+    }
+
+    /// Set the maximum number of tiles to keep in cache.
+    ///
+    /// Default is 100 tiles.
+    pub fn cache_size(mut self, size: u64) -> Self {
+        self.cache_size = size;
+        self
+    }
+
+    /// Enable auto-download with the specified configuration.
+    ///
+    /// When enabled, missing tiles will be downloaded from the configured source.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use htg::{SrtmServiceBuilder, download::DownloadConfig};
+    ///
+    /// let service = SrtmServiceBuilder::new("/data/srtm")
+    ///     .auto_download(DownloadConfig::with_url_template(
+    ///         "https://example.com/{filename}.hgt.gz",
+    ///         true, // is gzipped
+    ///     ))
+    ///     .build()?;
+    /// ```
+    #[cfg(feature = "download")]
+    pub fn auto_download(mut self, config: DownloadConfig) -> Self {
+        self.download_config = Some(config);
+        self
+    }
+
+    /// Build the [`SrtmService`].
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if auto-download is enabled but the downloader
+    /// cannot be created (e.g., due to TLS initialization failure).
+    #[cfg(feature = "download")]
+    pub fn build(self) -> Result<SrtmService> {
+        let downloader = match self.download_config {
+            Some(config) => Some(Downloader::new(config)?),
+            None => None,
+        };
+
+        Ok(SrtmService {
+            data_dir: self.data_dir,
+            tile_cache: Cache::builder().max_capacity(self.cache_size).build(),
+            hit_count: AtomicU64::new(0),
+            miss_count: AtomicU64::new(0),
+            downloader,
+        })
+    }
+
+    /// Build the [`SrtmService`].
+    #[cfg(not(feature = "download"))]
+    pub fn build(self) -> SrtmService {
+        SrtmService {
+            data_dir: self.data_dir,
+            tile_cache: Cache::builder().max_capacity(self.cache_size).build(),
+            hit_count: AtomicU64::new(0),
+            miss_count: AtomicU64::new(0),
+        }
     }
 }
 
@@ -303,10 +570,23 @@ mod tests {
         let result = service.get_elevation(50.0, 50.0);
         assert!(result.is_err());
 
-        if let Err(SrtmError::FileNotFound { path }) = result {
-            assert!(path.to_string_lossy().contains("N50E050.hgt"));
-        } else {
-            panic!("Expected FileNotFound error");
+        // Error type depends on whether download feature is enabled
+        #[cfg(not(feature = "download"))]
+        {
+            if let Err(SrtmError::FileNotFound { path }) = result {
+                assert!(path.to_string_lossy().contains("N50E050.hgt"));
+            } else {
+                panic!("Expected FileNotFound error");
+            }
+        }
+
+        #[cfg(feature = "download")]
+        {
+            if let Err(SrtmError::TileNotAvailable { filename }) = result {
+                assert!(filename.contains("N50E050"));
+            } else {
+                panic!("Expected TileNotAvailable error");
+            }
         }
     }
 
@@ -349,5 +629,73 @@ mod tests {
         let service = SrtmService::new(temp_dir.path(), 100);
 
         assert_eq!(service.cache_capacity(), 100);
+    }
+
+    #[test]
+    fn test_from_env_missing_data_dir() {
+        // Temporarily unset the env var if it exists
+        let original = std::env::var("HTG_DATA_DIR").ok();
+        std::env::remove_var("HTG_DATA_DIR");
+
+        let result = SrtmServiceBuilder::from_env();
+        assert!(result.is_err());
+
+        // Restore original value if it existed
+        if let Some(val) = original {
+            std::env::set_var("HTG_DATA_DIR", val);
+        }
+    }
+
+    #[test]
+    fn test_from_env_with_values() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Save original values
+        let orig_dir = std::env::var("HTG_DATA_DIR").ok();
+        let orig_size = std::env::var("HTG_CACHE_SIZE").ok();
+
+        // Set test values
+        std::env::set_var("HTG_DATA_DIR", temp_dir.path());
+        std::env::set_var("HTG_CACHE_SIZE", "50");
+
+        let builder = SrtmServiceBuilder::from_env().unwrap();
+        assert_eq!(builder.data_dir, temp_dir.path());
+        assert_eq!(builder.cache_size, 50);
+
+        // Restore original values
+        match orig_dir {
+            Some(v) => std::env::set_var("HTG_DATA_DIR", v),
+            None => std::env::remove_var("HTG_DATA_DIR"),
+        }
+        match orig_size {
+            Some(v) => std::env::set_var("HTG_CACHE_SIZE", v),
+            None => std::env::remove_var("HTG_CACHE_SIZE"),
+        }
+    }
+
+    #[test]
+    fn test_from_env_default_cache_size() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Save original values
+        let orig_dir = std::env::var("HTG_DATA_DIR").ok();
+        let orig_size = std::env::var("HTG_CACHE_SIZE").ok();
+
+        // Set only data dir, no cache size
+        std::env::set_var("HTG_DATA_DIR", temp_dir.path());
+        std::env::remove_var("HTG_CACHE_SIZE");
+
+        let builder = SrtmServiceBuilder::from_env().unwrap();
+        assert_eq!(builder.cache_size, 100); // Default value
+
+        // Restore original values
+        match orig_dir {
+            Some(v) => std::env::set_var("HTG_DATA_DIR", v),
+            None => std::env::remove_var("HTG_DATA_DIR"),
+        }
+        match orig_size {
+            Some(v) => std::env::set_var("HTG_CACHE_SIZE", v),
+            None => std::env::remove_var("HTG_CACHE_SIZE"),
+        }
     }
 }
