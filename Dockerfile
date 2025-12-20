@@ -1,17 +1,25 @@
-# Build stage
-FROM rust:1.83-bookworm AS builder
-
+# Stage 1: Generate recipe.json for dependency caching
+FROM lukemathwalker/cargo-chef:latest-rust-1.83-bookworm AS chef
 WORKDIR /app
 
-# Copy everything needed for the build
+# Stage 2: Plan dependencies
+FROM chef AS planner
+COPY . .
+RUN cargo chef prepare --recipe-path recipe.json
+
+# Stage 3: Build dependencies (cached layer)
+FROM chef AS builder
+COPY --from=planner /app/recipe.json recipe.json
+# Build dependencies - this layer is cached until Cargo.toml/Cargo.lock change
+RUN cargo chef cook --release --recipe-path recipe.json
+
+# Copy source and build application
 COPY Cargo.toml Cargo.lock ./
 COPY htg htg
 COPY htg-service htg-service
-
-# Build the application
 RUN cargo build --release -p htg-service
 
-# Runtime stage
+# Stage 4: Runtime
 FROM debian:bookworm-slim
 
 # Install SSL certificates for HTTPS downloads
