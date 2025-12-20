@@ -46,14 +46,18 @@
 //! let service = SrtmServiceBuilder::new("/data/srtm")
 //!     .cache_size(100)
 //!     .auto_download(DownloadConfig::with_url_template(
-//!         "https://example.com/srtm/{filename}.hgt.gz",
-//!         true, // is gzipped
+//!         "https://example.com/srtm/{filename}.hgt.gz", // compression auto-detected
 //!     ))
 //!     .build()?;
 //!
 //! // Will download N35E138.hgt if not present locally
 //! let elevation = service.get_elevation(35.5, 138.5)?;
 //! ```
+//!
+//! Supported compression formats (auto-detected from URL extension):
+//! - `.hgt.gz` - Gzip compression
+//! - `.hgt.zip` - ZIP archive
+//! - `.hgt` - No compression
 //!
 //! ## Low-Level API
 //!

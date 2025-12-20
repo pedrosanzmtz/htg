@@ -14,8 +14,7 @@
 //! let service = SrtmServiceBuilder::new("/data/srtm")
 //!     .cache_size(100)
 //!     .auto_download(DownloadConfig::with_url_template(
-//!         "https://example.com/srtm/{filename}.hgt.gz",
-//!         true,
+//!         "https://example.com/srtm/{filename}.hgt.gz", // compression auto-detected
 //!     ))
 //!     .build()?;
 //!
@@ -93,8 +92,7 @@ impl CacheStats {
 /// let service = SrtmServiceBuilder::new("/data/srtm")
 ///     .cache_size(100)
 ///     .auto_download(DownloadConfig::with_url_template(
-///         "https://example.com/srtm/{filename}.hgt.gz",
-///         true,
+///         "https://example.com/srtm/{filename}.hgt.gz", // compression auto-detected
 ///     ))
 ///     .build()?;
 /// ```
@@ -334,8 +332,7 @@ impl SrtmService {
 /// let service = SrtmServiceBuilder::new("/data/srtm")
 ///     .cache_size(100)
 ///     .auto_download(DownloadConfig::with_url_template(
-///         "https://example.com/srtm/{filename}.hgt.gz",
-///         true,
+///         "https://example.com/srtm/{filename}.hgt.gz", // compression auto-detected
 ///     ))
 ///     .build()?;
 /// ```
@@ -413,10 +410,22 @@ impl SrtmServiceBuilder {
         let download_config = {
             match std::env::var("HTG_DOWNLOAD_URL") {
                 Ok(url_template) => {
-                    let is_gzipped = std::env::var("HTG_DOWNLOAD_GZIP")
-                        .map(|v| v.eq_ignore_ascii_case("true") || v == "1")
-                        .unwrap_or(false);
-                    Some(DownloadConfig::with_url_template(url_template, is_gzipped))
+                    // Check for explicit compression setting, otherwise auto-detect from URL
+                    if let Ok(gzip_setting) = std::env::var("HTG_DOWNLOAD_GZIP") {
+                        let is_gzipped =
+                            gzip_setting.eq_ignore_ascii_case("true") || gzip_setting == "1";
+                        let compression = if is_gzipped {
+                            crate::download::Compression::Gzip
+                        } else {
+                            crate::download::Compression::None
+                        };
+                        Some(DownloadConfig::with_url_template_and_compression(
+                            url_template,
+                            compression,
+                        ))
+                    } else {
+                        Some(DownloadConfig::with_url_template(url_template))
+                    }
                 }
                 Err(_) => None,
             }
@@ -449,6 +458,7 @@ impl SrtmServiceBuilder {
     /// Enable auto-download with the specified configuration.
     ///
     /// When enabled, missing tiles will be downloaded from the configured source.
+    /// Compression format is auto-detected from the URL extension (.gz, .zip).
     ///
     /// # Example
     ///
@@ -457,8 +467,7 @@ impl SrtmServiceBuilder {
     ///
     /// let service = SrtmServiceBuilder::new("/data/srtm")
     ///     .auto_download(DownloadConfig::with_url_template(
-    ///         "https://example.com/{filename}.hgt.gz",
-    ///         true, // is gzipped
+    ///         "https://example.com/{filename}.hgt.gz", // compression auto-detected
     ///     ))
     ///     .build()?;
     /// ```
