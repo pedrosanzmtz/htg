@@ -1,0 +1,353 @@
+//! SRTM elevation service with LRU caching.
+//!
+//! This module provides [`SrtmService`], a high-level interface for querying
+//! elevation data with automatic tile loading and caching.
+
+use std::path::{Path, PathBuf};
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::sync::Arc;
+
+use moka::sync::Cache;
+
+use crate::error::{Result, SrtmError};
+use crate::filename::lat_lon_to_filename;
+use crate::tile::SrtmTile;
+
+/// Statistics about cache usage.
+#[derive(Debug, Clone, Default)]
+pub struct CacheStats {
+    /// Number of tiles currently in the cache.
+    pub entry_count: u64,
+    /// Number of cache hits (requests served from cache).
+    pub hit_count: u64,
+    /// Number of cache misses (tiles loaded from disk).
+    pub miss_count: u64,
+}
+
+impl CacheStats {
+    /// Calculate the cache hit rate (0.0 to 1.0).
+    ///
+    /// Returns 0.0 if no requests have been made.
+    pub fn hit_rate(&self) -> f64 {
+        let total = self.hit_count + self.miss_count;
+        if total == 0 {
+            0.0
+        } else {
+            self.hit_count as f64 / total as f64
+        }
+    }
+}
+
+/// High-level SRTM elevation service with automatic tile caching.
+///
+/// `SrtmService` manages loading and caching of SRTM tiles, providing a simple
+/// interface to query elevation at any coordinate within the data directory.
+///
+/// # Example
+///
+/// ```ignore
+/// use htg::SrtmService;
+///
+/// let service = SrtmService::new("/path/to/hgt/files", 100);
+///
+/// // Query elevation - tile is loaded automatically
+/// let elevation = service.get_elevation(35.6762, 139.6503)?; // Tokyo
+/// println!("Elevation: {}m", elevation);
+///
+/// // Second query in same tile uses cache
+/// let elevation2 = service.get_elevation(35.6800, 139.6500)?;
+///
+/// // Check cache statistics
+/// let stats = service.cache_stats();
+/// println!("Cache hit rate: {:.1}%", stats.hit_rate() * 100.0);
+/// ```
+pub struct SrtmService {
+    /// Directory containing .hgt files.
+    data_dir: PathBuf,
+    /// LRU cache of loaded tiles.
+    tile_cache: Cache<String, Arc<SrtmTile>>,
+    /// Number of cache hits.
+    hit_count: AtomicU64,
+    /// Number of cache misses.
+    miss_count: AtomicU64,
+}
+
+impl SrtmService {
+    /// Create a new SRTM service.
+    ///
+    /// # Arguments
+    ///
+    /// * `data_dir` - Directory containing `.hgt` files
+    /// * `cache_size` - Maximum number of tiles to keep in memory
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use htg::SrtmService;
+    ///
+    /// // Cache up to 100 tiles (~280MB for SRTM3, ~2.5GB for SRTM1)
+    /// let service = SrtmService::new("/data/srtm", 100);
+    /// ```
+    pub fn new<P: AsRef<Path>>(data_dir: P, cache_size: u64) -> Self {
+        Self {
+            data_dir: data_dir.as_ref().to_path_buf(),
+            tile_cache: Cache::builder().max_capacity(cache_size).build(),
+            hit_count: AtomicU64::new(0),
+            miss_count: AtomicU64::new(0),
+        }
+    }
+
+    /// Get elevation for the given coordinates.
+    ///
+    /// This method automatically determines which tile to load, loads it from
+    /// disk (or cache), and returns the elevation at the specified location.
+    ///
+    /// # Arguments
+    ///
+    /// * `lat` - Latitude in decimal degrees (-60 to 60)
+    /// * `lon` - Longitude in decimal degrees (-180 to 180)
+    ///
+    /// # Returns
+    ///
+    /// The elevation in meters, or an error if:
+    /// - Coordinates are outside SRTM coverage (±60° latitude)
+    /// - The required `.hgt` file is not found
+    /// - The file is corrupted or has invalid size
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let elevation = service.get_elevation(19.4326, -99.1332)?; // Mexico City
+    /// println!("Elevation: {}m", elevation);
+    /// ```
+    pub fn get_elevation(&self, lat: f64, lon: f64) -> Result<i16> {
+        // Validate coordinates
+        if !(-60.0..=60.0).contains(&lat) {
+            return Err(SrtmError::OutOfBounds { lat, lon });
+        }
+        if !(-180.0..=180.0).contains(&lon) {
+            return Err(SrtmError::OutOfBounds { lat, lon });
+        }
+
+        // Calculate filename for this coordinate
+        let filename = lat_lon_to_filename(lat, lon);
+
+        // Load tile (from cache or disk)
+        let tile = self.load_tile(&filename)?;
+
+        // Extract elevation from tile
+        tile.get_elevation(lat, lon)
+    }
+
+    /// Load a tile from cache or disk.
+    fn load_tile(&self, filename: &str) -> Result<Arc<SrtmTile>> {
+        // Check cache first
+        if let Some(tile) = self.tile_cache.get(filename) {
+            self.hit_count.fetch_add(1, Ordering::Relaxed);
+            return Ok(tile);
+        }
+
+        // Cache miss - load from disk
+        self.miss_count.fetch_add(1, Ordering::Relaxed);
+
+        let path = self.data_dir.join(filename);
+
+        if !path.exists() {
+            return Err(SrtmError::FileNotFound { path });
+        }
+
+        // Parse base coordinates from filename for the tile
+        let (base_lat, base_lon) = crate::filename::filename_to_lat_lon(filename).unwrap_or((0, 0));
+
+        let tile = Arc::new(SrtmTile::from_file_with_coords(&path, base_lat, base_lon)?);
+
+        // Insert into cache
+        self.tile_cache.insert(filename.to_string(), tile.clone());
+
+        Ok(tile)
+    }
+
+    /// Get cache statistics.
+    ///
+    /// Returns information about cache usage including hit rate.
+    pub fn cache_stats(&self) -> CacheStats {
+        CacheStats {
+            entry_count: self.tile_cache.entry_count(),
+            hit_count: self.hit_count.load(Ordering::Relaxed),
+            miss_count: self.miss_count.load(Ordering::Relaxed),
+        }
+    }
+
+    /// Get the data directory path.
+    pub fn data_dir(&self) -> &Path {
+        &self.data_dir
+    }
+
+    /// Get the maximum cache size.
+    pub fn cache_capacity(&self) -> u64 {
+        self.tile_cache.policy().max_capacity().unwrap_or(0)
+    }
+
+    /// Invalidate (remove) a specific tile from the cache.
+    ///
+    /// This can be useful if you know a tile file has been updated.
+    pub fn invalidate_tile(&self, filename: &str) {
+        self.tile_cache.invalidate(filename);
+    }
+
+    /// Clear all tiles from the cache.
+    pub fn clear_cache(&self) {
+        self.tile_cache.invalidate_all();
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::fs;
+    use std::io::Write;
+    use tempfile::TempDir;
+
+    /// File size for SRTM3 (1201 × 1201 × 2 bytes)
+    const SRTM3_SIZE: usize = 1201 * 1201 * 2;
+    const SRTM3_SAMPLES: usize = 1201;
+
+    /// Create a test SRTM3 file with elevation = 500m at center
+    fn create_test_tile(dir: &Path, filename: &str, center_elevation: i16) {
+        let mut data = vec![0u8; SRTM3_SIZE];
+
+        // Set center elevation (row 600, col 600)
+        let center_offset = (600 * SRTM3_SAMPLES + 600) * 2;
+        let bytes = center_elevation.to_be_bytes();
+        data[center_offset] = bytes[0];
+        data[center_offset + 1] = bytes[1];
+
+        let path = dir.join(filename);
+        let mut file = fs::File::create(path).unwrap();
+        file.write_all(&data).unwrap();
+    }
+
+    #[test]
+    fn test_service_basic() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // Query center of tile
+        let elevation = service.get_elevation(35.5, 138.5).unwrap();
+        assert_eq!(elevation, 500);
+    }
+
+    #[test]
+    fn test_cache_hit() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // First query - cache miss
+        let _ = service.get_elevation(35.5, 138.5).unwrap();
+        let stats1 = service.cache_stats();
+        assert_eq!(stats1.miss_count, 1);
+        assert_eq!(stats1.hit_count, 0);
+
+        // Second query in same tile - cache hit
+        let _ = service.get_elevation(35.6, 138.6).unwrap();
+        let stats2 = service.cache_stats();
+        assert_eq!(stats2.miss_count, 1);
+        assert_eq!(stats2.hit_count, 1);
+
+        // Note: entry_count may be lazy, so we just verify hit/miss counts
+    }
+
+    #[test]
+    fn test_multiple_tiles() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+        create_test_tile(temp_dir.path(), "N36E138.hgt", 1000);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        let elev1 = service.get_elevation(35.5, 138.5).unwrap();
+        let elev2 = service.get_elevation(36.5, 138.5).unwrap();
+
+        assert_eq!(elev1, 500);
+        assert_eq!(elev2, 1000);
+
+        let stats = service.cache_stats();
+        // Verify miss count (entry_count may be lazy)
+        assert_eq!(stats.miss_count, 2);
+    }
+
+    #[test]
+    fn test_invalid_coordinates() {
+        let temp_dir = TempDir::new().unwrap();
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // Latitude out of SRTM coverage
+        assert!(service.get_elevation(70.0, 0.0).is_err());
+        assert!(service.get_elevation(-70.0, 0.0).is_err());
+
+        // Longitude out of range
+        assert!(service.get_elevation(0.0, 200.0).is_err());
+        assert!(service.get_elevation(0.0, -200.0).is_err());
+    }
+
+    #[test]
+    fn test_missing_file() {
+        let temp_dir = TempDir::new().unwrap();
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // Query for a tile that doesn't exist
+        let result = service.get_elevation(50.0, 50.0);
+        assert!(result.is_err());
+
+        if let Err(SrtmError::FileNotFound { path }) = result {
+            assert!(path.to_string_lossy().contains("N50E050.hgt"));
+        } else {
+            panic!("Expected FileNotFound error");
+        }
+    }
+
+    #[test]
+    fn test_cache_stats() {
+        let stats = CacheStats {
+            entry_count: 5,
+            hit_count: 80,
+            miss_count: 20,
+        };
+
+        assert_eq!(stats.hit_rate(), 0.8);
+
+        let empty_stats = CacheStats::default();
+        assert_eq!(empty_stats.hit_rate(), 0.0);
+    }
+
+    #[test]
+    fn test_clear_cache() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // Load a tile
+        let _ = service.get_elevation(35.5, 138.5).unwrap();
+        assert_eq!(service.cache_stats().miss_count, 1);
+
+        // Clear cache
+        service.clear_cache();
+
+        // After clearing, next access should be a miss again
+        let _ = service.get_elevation(35.5, 138.5).unwrap();
+        assert_eq!(service.cache_stats().miss_count, 2);
+    }
+
+    #[test]
+    fn test_cache_capacity() {
+        let temp_dir = TempDir::new().unwrap();
+        let service = SrtmService::new(temp_dir.path(), 100);
+
+        assert_eq!(service.cache_capacity(), 100);
+    }
+}
