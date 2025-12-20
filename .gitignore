@@ -1,0 +1,22 @@
+# Rust
+/target/
+Cargo.lock
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+
+# OS
+.DS_Store
+Thumbs.db
+
+# SRTM data files (too large for git)
+*.hgt
+/data/
+/test_data/
+
+# Environment
+.env
+.env.local
