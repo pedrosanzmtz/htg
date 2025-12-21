@@ -2,16 +2,14 @@
 //!
 //! Run with: cargo run --example interpolation -- /path/to/hgt/files
 
-use htg::{SrtmService, SrtmError};
+use htg::{SrtmError, SrtmService};
 use std::env;
 
 fn main() -> Result<(), SrtmError> {
-    let data_dir = env::args()
-        .nth(1)
-        .unwrap_or_else(|| {
-            eprintln!("Usage: cargo run --example interpolation -- /path/to/hgt/files");
-            std::process::exit(1);
-        });
+    let data_dir = env::args().nth(1).unwrap_or_else(|| {
+        eprintln!("Usage: cargo run --example interpolation -- /path/to/hgt/files");
+        std::process::exit(1);
+    });
 
     let service = SrtmService::new(&data_dir, 10);
 

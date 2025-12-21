@@ -2,17 +2,15 @@
 //!
 //! Run with: cargo run --example basic -- /path/to/hgt/files
 
-use htg::{SrtmService, SrtmError};
+use htg::{SrtmError, SrtmService};
 use std::env;
 
 fn main() -> Result<(), SrtmError> {
     // Get data directory from command line
-    let data_dir = env::args()
-        .nth(1)
-        .unwrap_or_else(|| {
-            eprintln!("Usage: cargo run --example basic -- /path/to/hgt/files");
-            std::process::exit(1);
-        });
+    let data_dir = env::args().nth(1).unwrap_or_else(|| {
+        eprintln!("Usage: cargo run --example basic -- /path/to/hgt/files");
+        std::process::exit(1);
+    });
 
     // Create service with up to 10 cached tiles
     let service = SrtmService::new(&data_dir, 10);
