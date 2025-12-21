@@ -133,7 +133,7 @@ impl SrtmTile {
     /// Get the elevation at the specified coordinates using nearest-neighbor lookup.
     ///
     /// This method returns the elevation of the nearest grid point. For smoother
-    /// results with sub-pixel accuracy, use [`get_elevation_interpolated`].
+    /// results with sub-pixel accuracy, use [`Self::get_elevation_interpolated`].
     ///
     /// # Arguments
     ///
