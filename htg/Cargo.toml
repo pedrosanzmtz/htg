@@ -8,7 +8,7 @@ license = "MIT"
 repository = "https://github.com/pedrosanzmtz/htg"
 keywords = ["srtm", "elevation", "gis", "geography", "hgt"]
 categories = ["science::geo", "data-structures"]
-readme = "../README.md"
+readme = "README.md"
 
 [features]
 default = []
