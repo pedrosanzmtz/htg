@@ -2,7 +2,7 @@
 name = "htg-service"
 version = "0.1.0"
 edition = "2021"
-authors = ["Pedro Sanz Martinez <pedrosanzmtz@users.noreply.github.com>"]
+authors = ["Pedro Sánchez Martínez <pedrosanzmtz@users.noreply.github.com>"]
 description = "HTTP microservice for SRTM elevation queries"
 license = "MIT"
 repository = "https://github.com/pedrosanzmtz/htg"
