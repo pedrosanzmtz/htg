@@ -8,7 +8,7 @@ Python bindings for the [htg](https://github.com/pedrosanzmtz/htg) Rust library,
 ## Installation
 
 ```bash
-pip install htg
+pip install htg-srtm
 ```
 
 ## Quick Start
