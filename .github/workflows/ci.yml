@@ -76,6 +76,21 @@ jobs:
           cache-from: type=gha
           cache-to: type=gha,mode=max
 
+  dockerhub-readme:
+    name: Update Docker Hub README
+    runs-on: ubuntu-latest
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    steps:
+      - uses: actions/checkout@v4
+      - name: Update Docker Hub description
+        uses: peter-evans/dockerhub-description@v4
+        with:
+          username: ${{ secrets.DOCKERHUB_USERNAME }}
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+          repository: pedrosanzmtz/htg-service
+          readme-filepath: ./docker/README.md
+          short-description: "High-performance SRTM elevation microservice"
+
   benchmark:
     name: Benchmarks
     runs-on: ubuntu-latest
