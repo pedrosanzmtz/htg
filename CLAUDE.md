@@ -85,9 +85,16 @@ Return elevation value (i16 or f64)
 - `tower` / `tower-http` - Middleware (CORS, tracing)
 - `tracing` / `tracing-subscriber` - Structured logging
 
+### CLI Dependencies (htg-cli)
+- `clap` - Command-line argument parsing
+- `csv` - CSV file processing
+- `indicatif` - Progress bars for batch operations
+- `geojson` - GeoJSON file processing
+- `anyhow` - Error handling
+
 ## Project Structure
 
-This is a **Cargo workspace** with two crates:
+This is a **Cargo workspace** with three crates:
 
 ```
 htg/                            # Workspace root
@@ -113,18 +120,29 @@ htg/                            # Workspace root
 │       ├── filename.rs         # Lat/lon ↔ filename conversion
 │       ├── download.rs         # Auto-download feature (optional)
 │       └── error.rs            # Custom error types (SrtmError)
-└── htg-service/                # Binary crate (publish to DockerHub)
+├── htg-service/                # Binary crate (publish to DockerHub)
+│   ├── Cargo.toml
+│   ├── src/
+│   │   ├── main.rs             # Entry point, Axum setup
+│   │   └── handlers.rs         # HTTP handlers (GET/POST elevation)
+│   └── tests/
+│       └── api_tests.rs        # Integration tests
+└── htg-cli/                    # CLI tool binary
     ├── Cargo.toml
-    ├── src/
-    │   ├── main.rs             # Entry point, Axum setup
-    │   └── handlers.rs         # HTTP handlers (GET/POST elevation)
-    └── tests/
-        └── api_tests.rs        # Integration tests
+    └── src/
+        ├── main.rs             # CLI entry point with clap
+        └── commands/
+            ├── mod.rs          # Command module exports
+            ├── query.rs        # Single point elevation queries
+            ├── batch.rs        # CSV/GeoJSON batch processing
+            ├── info.rs         # Tile information display
+            └── list.rs         # List available tiles
 ```
 
 ### Publishing Targets
 - **htg** library → crates.io
 - **htg-service** binary → DockerHub
+- **htg-cli** binary → crates.io (cargo install)
 
 ## API Endpoints
 
@@ -221,6 +239,15 @@ curl "http://localhost:8080/stats"
 - [x] GitHub Actions CI/CD (format, clippy, test, build, docker)
 - [x] Comprehensive error handling
 - [x] README documentation
+
+### Phase 6: CLI Tool ✓
+- [x] `htg query` - Single point elevation queries
+- [x] `htg batch` - CSV and GeoJSON batch processing
+- [x] `htg info` - Tile information display (resolution, coverage, min/max)
+- [x] `htg list` - List available tiles in data directory
+- [x] Global options: `--data-dir`, `--cache-size`, `--auto-download`
+- [x] Progress bars for batch operations
+- [x] JSON output option
 
 ## Algorithm Details
 
@@ -366,6 +393,37 @@ curl "http://localhost:8080/health"
 
 # Cache stats
 curl "http://localhost:8080/stats"
+```
+
+### CLI Tool Usage
+
+```bash
+# Query single point
+htg query --lat 35.3606 --lon 138.7274
+# 3776
+
+# Query with interpolation
+htg query --lat 35.3606 --lon 138.7274 --interpolate
+# 3776.42
+
+# Query with JSON output
+htg query --lat 35.3606 --lon 138.7274 --json
+# {"lat":35.3606,"lon":138.7274,"elevation":3776.0}
+
+# Batch process CSV file
+htg batch input.csv --output output.csv
+
+# Batch process GeoJSON file
+htg batch input.geojson --output output.geojson
+
+# Get tile info
+htg info N35E138
+
+# List available tiles
+htg list
+
+# Use with auto-download
+htg --auto-download query --lat 35.3606 --lon 138.7274
 ```
 
 ## Success Criteria
