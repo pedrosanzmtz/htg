@@ -3,7 +3,7 @@ requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "htg-srtm"
+name = "srtm"
 version = "0.1.0"
 description = "High-performance SRTM elevation data library"
 readme = "README.md"
