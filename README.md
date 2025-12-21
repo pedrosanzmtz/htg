@@ -24,7 +24,7 @@ Existing elevation services (e.g., Python/Flask) consume excessive memory (7GB+)
 
 ## Project Structure
 
-This is a Cargo workspace with two crates:
+This is a Cargo workspace with three crates:
 
 ```
 htg/
@@ -37,10 +37,15 @@ htg/
 │       ├── download.rs   # Auto-download functionality
 │       └── error.rs      # Error types
 │
-└── htg-service/      # Binary crate (publish to DockerHub)
+├── htg-service/      # HTTP service binary (publish to DockerHub)
+│   └── src/
+│       ├── main.rs       # Axum HTTP server
+│       └── handlers.rs   # API handlers
+│
+└── htg-cli/          # CLI tool binary
     └── src/
-        ├── main.rs       # Axum HTTP server
-        └── handlers.rs   # API handlers
+        ├── main.rs       # CLI entry point
+        └── commands/     # Command implementations
 ```
 
 ## Quick Start
@@ -258,6 +263,101 @@ use htg::SrtmServiceBuilder;
 let service = SrtmServiceBuilder::from_env()?.build()?;
 let elevation = service.get_elevation(35.6762, 139.6503)?;
 ```
+
+## CLI Tool
+
+The `htg` CLI tool provides offline elevation queries from the command line.
+
+### Installation
+
+```bash
+# From source
+cargo install --path htg-cli
+
+# Or build and run directly
+cargo run -p htg-cli -- --help
+```
+
+### Commands
+
+#### Query (Single Point)
+
+```bash
+# Basic query
+htg query --lat 35.3606 --lon 138.7274
+# Output: 3776
+
+# With interpolation
+htg query --lat 35.3606 --lon 138.7274 --interpolate
+# Output: 3776.42
+
+# JSON output
+htg query --lat 35.3606 --lon 138.7274 --json
+# Output: {"lat":35.3606,"lon":138.7274,"elevation":3776.0,"interpolated":false}
+```
+
+#### Batch (CSV/GeoJSON)
+
+```bash
+# Process CSV file (adds elevation column)
+htg batch input.csv --output output.csv
+
+# Custom column names
+htg batch input.csv --lat-col latitude --lon-col longitude
+
+# Process GeoJSON (adds Z coordinate)
+htg batch input.geojson --output output.geojson
+```
+
+#### Info (Tile Information)
+
+```bash
+# By tile name
+htg info N35E138
+
+# By file path
+htg info /path/to/N35E138.hgt
+
+# Output:
+# Tile: N35E138.hgt
+# Path: /data/srtm/N35E138.hgt
+#
+# Resolution: SRTM3 (~90m) (1201x1201 samples)
+# Coverage: N35-N36, E138E139
+# File size: 2.88 MB
+#
+# Min elevation: -12m
+# Max elevation: 3776m
+```
+
+#### List (Available Tiles)
+
+```bash
+htg list
+# Output:
+# TILE           TYPE             COVERAGE
+# --------------------------------------------
+# N35E138.hgt   SRTM3    N35 to N36, E138 to E139
+# N35E139.hgt   SRTM3    N35 to N36, E139 to E140
+# ...
+#
+# Summary:
+#   Total tiles: 2
+#   SRTM3 (90m): 2
+#   Total size: 5.77 MB
+```
+
+### Global Options
+
+```bash
+htg --data-dir /path/to/srtm --cache-size 50 --auto-download query --lat 35.5 --lon 138.5
+```
+
+| Option | Description |
+|--------|-------------|
+| `-d, --data-dir` | Directory containing .hgt files (or set `HTG_DATA_DIR`) |
+| `-c, --cache-size` | Maximum tiles in cache (default: 100) |
+| `-a, --auto-download` | Enable automatic tile download from ArduPilot |
 
 ## SRTM Data
 
