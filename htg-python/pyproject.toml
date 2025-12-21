@@ -1,0 +1,41 @@
+[build-system]
+requires = ["maturin>=1.4,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "srtm"
+dynamic = ["version"]
+description = "High-performance SRTM elevation data library"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "Pedro Sánchez Martínez", email = "pedrosanzmtz@users.noreply.github.com" }]
+requires-python = ">=3.8"
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Intended Audience :: Science/Research",
+    "License :: OSI Approved :: MIT License",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.8",
+    "Programming Language :: Python :: 3.9",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Rust",
+    "Topic :: Scientific/Engineering :: GIS",
+]
+keywords = ["srtm", "elevation", "gis", "geography", "terrain"]
+dependencies = []
+
+[project.urls]
+Homepage = "https://github.com/pedrosanzmtz/htg"
+Repository = "https://github.com/pedrosanzmtz/htg"
+Documentation = "https://github.com/pedrosanzmtz/htg#readme"
+
+[project.optional-dependencies]
+dev = ["pytest", "maturin"]
+
+[tool.maturin]
+features = ["pyo3/extension-module"]
+python-source = "python"
+module-name = "srtm"

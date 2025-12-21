@@ -1,0 +1,17 @@
+[package]
+name = "htg-python"
+version = "0.1.0"
+edition = "2021"
+authors = ["Pedro Sánchez Martínez <pedrosanzmtz@users.noreply.github.com>"]
+description = "Python bindings for htg SRTM elevation library"
+license = "MIT"
+repository = "https://github.com/pedrosanzmtz/htg"
+readme = "README.md"
+
+[lib]
+name = "srtm"
+crate-type = ["cdylib"]
+
+[dependencies]
+htg = { path = "../htg", features = ["geojson"] }
+pyo3 = { version = "0.22", features = ["extension-module"] }
