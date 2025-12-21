@@ -516,6 +516,18 @@ GeoJSON Batch:
 | 5 | Production Ready | ✅ Complete |
 | 6 | Publish to crates.io | 🔄 Pending |
 | 7 | Publish to DockerHub | 🔄 Pending |
+| 8 | CGIAR SRTM v4 support | 📋 Planned |
+| 9 | Bicubic interpolation | 📋 Planned |
+
+### Coming Soon: SRTM v4 Support
+
+We're adding support for [CGIAR SRTM v4](https://bigdata.cgiar.org/srtm-90m-digital-elevation-database/) data, which provides:
+
+- **Void-filled data** - No gaps in mountainous or snow-covered regions
+- **Higher accuracy** - ~4.5m RMS vs ~6m for raw NASA SRTM
+- **Seamless global coverage** - Interpolated peaks and difficult terrain
+
+See issues [#55](https://github.com/pedrosanzmtz/htg/issues/55), [#56](https://github.com/pedrosanzmtz/htg/issues/56), and [#57](https://github.com/pedrosanzmtz/htg/issues/57) for details.
 
 ## License
 
