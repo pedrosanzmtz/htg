@@ -38,4 +38,4 @@ dev = ["pytest", "maturin"]
 [tool.maturin]
 features = ["pyo3/extension-module"]
 python-source = "python"
-module-name = "htg"
+module-name = "srtm"

@@ -14,10 +14,10 @@ pip install srtm
 ## Quick Start
 
 ```python
-import htg
+import srtm
 
 # Create service with up to 100 cached tiles
-service = htg.SrtmService("/path/to/srtm", cache_size=100)
+service = srtm.SrtmService("/path/to/srtm", cache_size=100)
 
 # Query elevation (Mount Fuji)
 elevation = service.get_elevation(35.3606, 138.7274)
@@ -35,18 +35,18 @@ print(f"Cache hit rate: {stats.hit_rate:.1%}")
 ## Utility Functions
 
 ```python
-import htg
+import srtm
 
 # Convert coordinates to filename
-filename = htg.lat_lon_to_filename(35.5, 138.7)
+filename = srtm.lat_lon_to_filename(35.5, 138.7)
 print(filename)  # "N35E138.hgt"
 
 # Parse filename to coordinates
-coords = htg.filename_to_lat_lon("N35E138.hgt")
+coords = srtm.filename_to_lat_lon("N35E138.hgt")
 print(coords)  # (35, 138)
 
 # Void value constant
-print(htg.VOID_VALUE)  # -32768
+print(srtm.VOID_VALUE)  # -32768
 ```
 
 ## SRTM Data

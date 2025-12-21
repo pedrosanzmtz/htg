@@ -1,6 +1,6 @@
 # The native extension module is imported directly by maturin
 # This file just ensures the package is recognized and provides type hints
-from htg.htg import (  # type: ignore[import]
+from srtm.srtm import (  # type: ignore[import]
     CacheStats as CacheStats,
     SrtmService as SrtmService,
     VOID_VALUE as VOID_VALUE,
