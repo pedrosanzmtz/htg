@@ -1,5 +1,10 @@
 # HTG - SRTM Elevation Library & Service
 
+[![Crates.io](https://img.shields.io/crates/v/htg.svg)](https://crates.io/crates/htg)
+[![Docker Hub](https://img.shields.io/docker/v/pedrosanzmtz/htg-service?label=docker)](https://hub.docker.com/r/pedrosanzmtz/htg-service)
+[![CI](https://github.com/pedrosanzmtz/htg/actions/workflows/ci.yml/badge.svg)](https://github.com/pedrosanzmtz/htg/actions/workflows/ci.yml)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
+
 High-performance, memory-efficient Rust library and microservice for querying elevation data from SRTM (Shuttle Radar Topography Mission) `.hgt` files.
 
 ## Problem
