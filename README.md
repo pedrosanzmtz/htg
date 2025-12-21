@@ -1,7 +1,7 @@
 # HTG - SRTM Elevation Library & Service
 
 [![Crates.io](https://img.shields.io/crates/v/htg.svg)](https://crates.io/crates/htg)
-[![Docker Hub](https://img.shields.io/docker/v/pedrosanzmtz/htg-service?label=docker)](https://hub.docker.com/r/pedrosanzmtz/htg-service)
+[![Docker Hub](https://img.shields.io/docker/v/pedropan1995/htg-service?label=docker)](https://hub.docker.com/r/pedropan1995/htg-service)
 [![CI](https://github.com/pedrosanzmtz/htg/actions/workflows/ci.yml/badge.svg)](https://github.com/pedrosanzmtz/htg/actions/workflows/ci.yml)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
@@ -76,7 +76,7 @@ docker run -d \
   -v /path/to/hgt/files:/data/srtm:ro \
   -e HTG_DATA_DIR=/data/srtm \
   -e HTG_CACHE_SIZE=100 \
-  pedrosanzmtz/htg-service:latest
+  pedropan1995/htg-service:latest
 ```
 
 ### From Source
