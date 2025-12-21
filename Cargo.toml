@@ -1,3 +1,3 @@
 [workspace]
-members = ["htg", "htg-service"]
+members = ["htg", "htg-service", "htg-python"]
 resolver = "2"
