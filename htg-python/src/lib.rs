@@ -1,5 +1,7 @@
 //! Python bindings for the htg SRTM elevation library.
 
+#![allow(clippy::useless_conversion)]
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
