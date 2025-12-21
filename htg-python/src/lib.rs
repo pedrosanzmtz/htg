@@ -187,7 +187,7 @@ fn srtm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<CacheStats>()?;
     m.add_function(wrap_pyfunction!(lat_lon_to_filename, m)?)?;
     m.add_function(wrap_pyfunction!(filename_to_lat_lon, m)?)?;
-    m.add("__version__", "0.1.0")?;
+    m.add("__version__", env!("CARGO_PKG_VERSION"))?;
     m.add("VOID_VALUE", htg_lib::VOID_VALUE)?;
     Ok(())
 }
