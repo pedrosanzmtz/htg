@@ -1,7 +1,7 @@
 # htg-service
 
-[![Docker Hub](https://img.shields.io/docker/v/pedrosanzmtz/htg-service?label=version)](https://hub.docker.com/r/pedrosanzmtz/htg-service)
-[![Docker Pulls](https://img.shields.io/docker/pulls/pedrosanzmtz/htg-service)](https://hub.docker.com/r/pedrosanzmtz/htg-service)
+[![Docker Hub](https://img.shields.io/docker/v/pedropan1995/htg-service?label=version)](https://hub.docker.com/r/pedropan1995/htg-service)
+[![Docker Pulls](https://img.shields.io/docker/pulls/pedropan1995/htg-service)](https://hub.docker.com/r/pedropan1995/htg-service)
 
 High-performance HTTP microservice for querying SRTM elevation data.
 
@@ -12,7 +12,7 @@ docker run -d \
   -p 8080:8080 \
   -v /path/to/hgt/files:/data/srtm:ro \
   -e HTG_DATA_DIR=/data/srtm \
-  pedrosanzmtz/htg-service:latest
+  pedropan1995/htg-service:latest
 ```
 
 Test it:
@@ -31,7 +31,7 @@ docker run -d \
   -v htg-cache:/data/srtm \
   -e HTG_DATA_DIR=/data/srtm \
   -e HTG_DOWNLOAD_SOURCE=ardupilot \
-  pedrosanzmtz/htg-service:latest
+  pedropan1995/htg-service:latest
 ```
 
 Tiles are downloaded automatically on first request.
@@ -52,7 +52,7 @@ Tiles are downloaded automatically on first request.
 ```yaml
 services:
   htg:
-    image: pedrosanzmtz/htg-service:latest
+    image: pedropan1995/htg-service:latest
     ports:
       - "8080:8080"
     volumes:

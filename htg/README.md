@@ -102,7 +102,7 @@ let service = SrtmServiceBuilder::from_env()?.build()?;
 This is part of the [htg workspace](https://github.com/pedrosanzmtz/htg):
 
 - **htg** (this crate) - Core library
-- **htg-service** - HTTP microservice ([DockerHub](https://hub.docker.com/r/pedrosanzmtz/htg-service))
+- **htg-service** - HTTP microservice ([DockerHub](https://hub.docker.com/r/pedropan1995/htg-service))
 - **htg-cli** - Command-line tool
 
 ## License

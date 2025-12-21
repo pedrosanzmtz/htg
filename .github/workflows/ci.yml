@@ -87,7 +87,7 @@ jobs:
         with:
           username: ${{ secrets.DOCKERHUB_USERNAME }}
           password: ${{ secrets.DOCKERHUB_TOKEN }}
-          repository: pedrosanzmtz/htg-service
+          repository: pedropan1995/htg-service
           readme-filepath: ./docker/README.md
           short-description: "High-performance SRTM elevation microservice"
 
