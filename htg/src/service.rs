@@ -157,7 +157,7 @@ impl SrtmService {
     /// This method automatically determines which tile to load, loads it from
     /// disk (or cache), and returns the elevation at the specified location.
     ///
-    /// For smoother results with sub-pixel accuracy, use [`get_elevation_interpolated`].
+    /// For smoother results with sub-pixel accuracy, use [`Self::get_elevation_interpolated`].
     ///
     /// # Arguments
     ///
