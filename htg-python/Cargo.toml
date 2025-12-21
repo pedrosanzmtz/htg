@@ -1,6 +1,6 @@
 [package]
 name = "htg-python"
-version = "0.1.0"
+version = "0.2.0"
 edition = "2021"
 authors = ["Pedro Sánchez Martínez <pedrosanzmtz@users.noreply.github.com>"]
 description = "Python bindings for htg SRTM elevation library"
