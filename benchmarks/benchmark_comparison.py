@@ -331,7 +331,7 @@ def print_comparison_table(title: str, srtm4_results: dict, htg_results: dict, m
     table = Table(title=title)
     table.add_column("Metric", style="cyan")
     table.add_column("srtm4", style="yellow")
-    table.add_column("htg", style="green")
+    table.add_column("htg-python", style="green")
     table.add_column("Improvement", style="magenta")
 
     for metric in metric_names:
@@ -362,7 +362,11 @@ def print_comparison_table(title: str, srtm4_results: dict, htg_results: dict, m
 
 def run_benchmarks(data_dir: str, output_file: str | None = None):
     """Run complete benchmark suite."""
-    console.print("\n[bold blue]=== HTG vs SRTM4 Performance Comparison ===[/bold blue]\n")
+    console.print("\n[bold blue]=== Python SRTM Libraries Performance Comparison ===[/bold blue]\n")
+    console.print("[cyan]Comparing:[/cyan]")
+    console.print("  • [yellow]srtm4[/yellow]: Python library with C++ backend (subprocess-based)")
+    console.print("  • [green]htg-python[/green]: Rust library with Python bindings (PyO3/maturin)")
+    console.print()
 
     if not os.path.isdir(data_dir):
         console.print(f"[red]Error: Data directory not found: {data_dir}[/red]")
@@ -397,14 +401,14 @@ def run_benchmarks(data_dir: str, output_file: str | None = None):
 
     results["startup"] = {
         "srtm4": {"startup_time_ms": srtm4_startup},
-        "htg": {"startup_time_ms": htg_startup},
+        "htg-python": {"startup_time_ms": htg_startup},
     }
 
     if has_srtm4 and has_htg:
         print_comparison_table(
             "Startup Time",
             results["startup"]["srtm4"],
-            results["startup"]["htg"],
+            results["startup"]["htg-python"],
             ["startup_time_ms"],
             "ms"
         )
@@ -416,7 +420,7 @@ def run_benchmarks(data_dir: str, output_file: str | None = None):
 
     results["memory"] = {
         "srtm4": srtm4_mem,
-        "htg": htg_mem,
+        "htg-python": htg_mem,
     }
 
     if has_srtm4 and has_htg:
@@ -435,7 +439,7 @@ def run_benchmarks(data_dir: str, output_file: str | None = None):
 
     results["latency"] = {
         "srtm4": srtm4_latency,
-        "htg": htg_latency,
+        "htg-python": htg_latency,
     }
 
     if has_srtm4 and has_htg:
@@ -454,7 +458,7 @@ def run_benchmarks(data_dir: str, output_file: str | None = None):
 
     results["throughput"] = {
         "srtm4": srtm4_throughput,
-        "htg": htg_throughput,
+        "htg-python": htg_throughput,
     }
 
     if has_srtm4 and has_htg:
@@ -483,6 +487,19 @@ def run_benchmarks(data_dir: str, output_file: str | None = None):
             throughput_improvement = htg_throughput["queries_per_second"] / srtm4_throughput["queries_per_second"]
             console.print(f"Throughput: [green]{throughput_improvement:.1f}x higher[/green]")
 
+        console.print()
+        console.print("[bold cyan]=== Architecture Comparison ===[/bold cyan]")
+        console.print("[yellow]srtm4:[/yellow]")
+        console.print("  • Python wrapper around C++ binaries")
+        console.print("  • Shells out to subprocess for each query")
+        console.print("  • Downloads SRTM tiles from CGIAR on first access")
+        console.print("  • Caches tiles to disk (~/.srtm/)")
+        console.print()
+        console.print("[green]htg-python:[/green]")
+        console.print("  • Pure Rust library with Python bindings (PyO3)")
+        console.print("  • Zero-copy memory-mapped I/O")
+        console.print("  • In-memory LRU cache (no disk writes)")
+        console.print("  • No subprocess overhead - direct Rust function calls")
         console.print()
 
     # Save results to JSON if requested
