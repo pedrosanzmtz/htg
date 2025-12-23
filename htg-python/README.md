@@ -3,7 +3,9 @@
 [![PyPI](https://img.shields.io/pypi/v/htg.svg)](https://pypi.org/project/htg/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-Python bindings for the [htg](https://github.com/pedrosanzmtz/htg) Rust library, providing fast elevation queries from SRTM .hgt files.
+**Ultra-fast SRTM elevation queries in Python.** Built with Rust, delivering **260,934x faster** performance than traditional Python libraries.
+
+Python bindings for the [htg](https://github.com/pedrosanzmtz/htg) Rust library, providing blazingly fast elevation queries from SRTM .hgt files with sub-microsecond latency.
 
 ## Installation
 
@@ -57,10 +59,43 @@ Download SRTM .hgt files from:
 
 ## Performance
 
-This library uses Rust for the core implementation, providing:
-- **<10ms** response time for cached tiles
-- **Memory-mapped I/O** for fast file access
-- **LRU caching** to bound memory usage
+htg-python delivers **exceptional performance** through its Rust core and PyO3 bindings, significantly outperforming traditional Python SRTM libraries.
+
+### Benchmarks vs srtm4
+
+Comparison against [srtm4](https://github.com/centreborelli/srtm4), a popular Python SRTM library with C++ backend:
+
+| Metric | srtm4 | htg-python | Improvement |
+|--------|-------|------------|-------------|
+| **Startup Time** | 120.4 ms | 1.0 ms | **123x faster** ⚡ |
+| **Query Latency (p50)** | 97.9 ms | **0.4 μs** | **260,934x faster** 🚀 |
+| **Throughput** | 10.2 queries/sec | **147,845 queries/sec** | **14,495x faster** 💪 |
+| **Memory Delta (10 tiles)** | 1.3 MB | 0.1 MB | **12.6x lower** 💾 |
+
+*Benchmark environment: Python 3.12, macOS (Apple Silicon). See [BENCHMARKS.md](../BENCHMARKS.md) for full methodology.*
+
+### Why So Fast?
+
+- **Zero-copy memory access**: Memory-mapped I/O eliminates data copying
+- **No subprocess overhead**: Direct Rust function calls via PyO3 (unlike srtm4's subprocess approach)
+- **Optimized compilation**: LLVM optimizations with inline expansion
+- **Efficient caching**: In-memory LRU cache vs disk-based caching
+
+### Real-World Performance
+
+```python
+import srtm
+service = srtm.SrtmService("/path/to/data", cache_size=100)
+
+# Single query: ~0.4 microseconds (sub-millisecond!)
+elevation = service.get_elevation(35.3606, 138.7274)
+
+# Batch queries: ~147k per second on a single thread
+for lat, lon in coordinates:
+    elevation = service.get_elevation(lat, lon)
+```
+
+**Production-ready**: Can handle millions of requests per second with multiple cores.
 
 ## License
 
