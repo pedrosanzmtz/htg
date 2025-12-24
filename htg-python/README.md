@@ -3,7 +3,7 @@
 [![PyPI](https://img.shields.io/pypi/v/htg.svg)](https://pypi.org/project/htg/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
-**Ultra-fast SRTM elevation queries in Python.** Built with Rust, delivering **260,934x faster** performance than traditional Python libraries.
+**Ultra-fast SRTM elevation queries in Python.** Built with Rust, delivering **3.5x faster** performance than the most popular Python SRTM library.
 
 Python bindings for the [htg](https://github.com/pedrosanzmtz/htg) Rust library, providing blazingly fast elevation queries from SRTM .hgt files with sub-microsecond latency.
 
@@ -61,16 +61,21 @@ Download SRTM .hgt files from:
 
 htg-python delivers **exceptional performance** through its Rust core and PyO3 bindings, significantly outperforming traditional Python SRTM libraries.
 
-### Benchmarks vs srtm4
+### Benchmarks vs Popular Python Libraries
 
-Comparison against [srtm4](https://github.com/centreborelli/srtm4), a popular Python SRTM library with C++ backend:
+Comparison using **local .hgt files only** (fair, apples-to-apples test):
 
-| Metric | srtm4 | htg-python | Improvement |
-|--------|-------|------------|-------------|
-| **Startup Time** | 120.4 ms | 1.0 ms | **123x faster** ⚡ |
-| **Query Latency (p50)** | 97.9 ms | **0.4 μs** | **260,934x faster** 🚀 |
-| **Throughput** | 10.2 queries/sec | **147,845 queries/sec** | **14,495x faster** 💪 |
-| **Memory Delta (10 tiles)** | 1.3 MB | 0.1 MB | **12.6x lower** 💾 |
+| Library | Implementation | Per Query | Throughput | vs htg-python |
+|---------|----------------|-----------|------------|---------------|
+| **htg-python** | Rust + PyO3 | **0.41 μs** | **2,419,110 q/s** | 1.0x (baseline) ⚡ |
+| **[srtm.py](https://github.com/tkrajina/srtm.py)** | Pure Python (256 ⭐) | 1.43 μs | 697,654 q/s | **3.5x slower** |
+| **[srtm4](https://github.com/centreborelli/srtm4)** | Python + C++ subprocess | 99,630 μs | 10 q/s | **241,017x slower** |
+
+**Key findings:**
+- **3.5x faster** than srtm.py (most popular, fair comparison)
+- **241,000x faster** than srtm4 (subprocess overhead dominates)
+- **Sub-microsecond latency** - queries complete in 0.41 microseconds
+- **2.4 million queries/second** on a single thread
 
 *Benchmark environment: Python 3.12, macOS (Apple Silicon). See [BENCHMARKS.md](../BENCHMARKS.md) for full methodology.*
 

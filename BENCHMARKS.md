@@ -11,18 +11,17 @@ htg is a high-performance SRTM elevation service built in Rust, designed to solv
 - **Sub-millisecond latency**: <1ms for cached queries
 - **High throughput**: >10,000 requests/second
 
-**Key Improvements vs. srtm4 (Popular Python Library):**
-- **1,689x faster startup** (4.3s → 2.6ms)
-- **12.6x lower memory** usage (1.33MB → 0.11MB delta)
-- **253,716x faster queries** (105.8ms → 0.4μs p50)
-- **15,839x higher throughput** (9.4 → 148,885 queries/sec)
+**Key Improvements vs. Python SRTM Libraries:**
+- **3.5x faster than srtm.py** (most popular, 256 GitHub stars)
+- **241,000x faster than srtm4** (subprocess-based architecture)
 
 ## Benchmark Suite
 
-We provide two benchmark scripts in the `benchmarks/` directory:
+We provide three benchmark scripts in the `benchmarks/` directory:
 
 1. **`benchmark.py`** - Measures htg-service Docker container performance
-2. **`benchmark_comparison.py`** - Compares htg vs srtm4 head-to-head
+2. **`benchmark_comparison.py`** - Compares htg-python vs srtm4 (legacy)
+3. **`benchmark_all_libraries.py`** - Compares htg-python vs srtm.py vs srtm4 (recommended)
 
 ## HTG Standalone Performance
 
@@ -62,7 +61,57 @@ These benchmarks measure the htg-service Docker container against project succes
 - **Throughput:** Single-threaded performance exceeds 10,000 req/s
 - **Batch processing:** Scales linearly with number of points
 
-## HTG vs SRTM4 Comparison
+## Python SRTM Libraries Comparison (Recommended)
+
+This is the **fair, apples-to-apples comparison** of htg-python against popular Python SRTM libraries using LOCAL files only.
+
+### Libraries Tested
+
+1. **htg-python** - Rust core with Python bindings (PyO3)
+2. **[srtm.py](https://github.com/tkrajina/srtm.py)** - Pure Python (256 GitHub stars, most popular)
+3. **[srtm4](https://github.com/centreborelli/srtm4)** - Python + C++ subprocess
+
+### Test Environment
+- **Platform:** macOS (Apple Silicon)
+- **Python:** 3.12.12
+- **Test:** 1,000 queries on LOCAL .hgt files (no download)
+- **Location:** Mount Fuji (35.3606°N, 138.7274°E)
+- **Test Date:** 2025-12-23
+- **Method:** htg-python runs FIRST to ensure all files exist locally
+
+### Results
+
+| Library | Implementation | Per Query | Throughput | vs htg-python |
+|---------|----------------|-----------|------------|---------------|
+| **htg-python** | Rust + PyO3 | **0.41 μs** | **2,419,110 q/s** | 1.0x (baseline) |
+| **srtm.py** | Pure Python | 1.43 μs | 697,654 q/s | **3.5x slower** |
+| **srtm4** | Python + C++ (subprocess) | 99,630 μs | 10 q/s | **241,017x slower** |
+
+### Analysis
+
+#### vs srtm.py (Fair Comparison)
+- **3.5x faster** - Both using local files with efficient file I/O
+- htg uses memory-mapped I/O (zero-copy) vs Python file reads
+- Realistic, honest performance improvement
+- srtm.py is well-optimized pure Python code
+
+#### vs srtm4 (Architectural Difference)
+- **241,017x faster** - Massive but explained by architecture
+- srtm4 shells out to C++ subprocess for EVERY query
+- Even with local files, subprocess overhead dominates (99ms per query!)
+- Not a fair comparison due to fundamentally different architectures
+
+#### Key Takeaways
+
+✅ **htg-python is 3.5x faster** than the most popular pure Python SRTM library
+
+✅ **Sub-microsecond latency** (0.41 μs) - queries complete faster than measurement precision
+
+✅ **2.4 million queries/second** - single-threaded performance on standard hardware
+
+✅ **Memory-efficient** - Zero-copy memory-mapped I/O
+
+## HTG vs SRTM4 Comparison (Legacy)
 
 [srtm4](https://github.com/centreborelli/srtm4) is a popular Python elevation library with a C++ backend (82.5% C++, 11.9% Python).
 
