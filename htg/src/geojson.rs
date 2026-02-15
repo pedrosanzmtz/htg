@@ -163,9 +163,9 @@ pub fn add_elevation_to_coord(service: &SrtmService, coord: &[f64]) -> Result<Ve
     let lon = coord[0];
     let lat = coord[1];
 
-    let elevation = service.get_elevation(lat, lon)?;
+    let elevation = service.get_elevation(lat, lon)?.unwrap_or(0) as f64;
 
-    Ok(vec![lon, lat, elevation as f64])
+    Ok(vec![lon, lat, elevation])
 }
 
 /// Add elevations to a list of GeoJSON coordinates.

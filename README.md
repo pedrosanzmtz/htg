@@ -15,16 +15,19 @@ Existing elevation services (e.g., Python/Flask) consume excessive memory (7GB+)
 
 - **Fast**: <10ms response time for cached tiles
 - **Memory Efficient**: <100MB with 100 cached tiles (vs 7GB in Python)
-- **Offline**: No internet required, works with local `.hgt` files
+- **Offline**: No internet required, works with local `.hgt` or `.hgt.zip` files
 - **Auto-Download**: Optional automatic tile download from configurable sources
 - **Automatic Detection**: Determines correct tile from coordinates
 - **LRU Caching**: Configurable cache size to bound memory usage
+- **Safe API**: Service-level methods return `Option` for void/missing data
+- **Batch Queries**: `get_elevations_batch()` for efficient multi-coordinate lookups
+- **Python Bindings**: Native Python package via PyO3 (Python 3.8-3.13)
 - **Docker Ready**: Easy deployment with Docker/Docker Compose
 - **OpenAPI Docs**: Interactive Swagger UI at `/docs`
 
 ## Project Structure
 
-This is a Cargo workspace with three crates:
+This is a Cargo workspace with four crates:
 
 ```
 htg/
@@ -42,10 +45,14 @@ htg/
 │       ├── main.rs       # Axum HTTP server
 │       └── handlers.rs   # API handlers
 │
-└── htg-cli/          # CLI tool binary
-    └── src/
-        ├── main.rs       # CLI entry point
-        └── commands/     # Command implementations
+├── htg-cli/          # CLI tool binary
+│   └── src/
+│       ├── main.rs       # CLI entry point
+│       └── commands/     # Command implementations
+│
+└── htg-python/       # Python bindings (PyPI: srtm)
+    ├── src/lib.rs        # PyO3 bindings
+    └── python/srtm/      # Python package + type stubs
 ```
 
 ## Quick Start
@@ -209,10 +216,10 @@ Add to your `Cargo.toml`:
 
 ```toml
 [dependencies]
-htg = "0.1"
+htg = "0.3"
 
 # With auto-download support
-htg = { version = "0.1", features = ["download"] }
+htg = { version = "0.3", features = ["download"] }
 ```
 
 ### Basic Usage
@@ -221,8 +228,15 @@ htg = { version = "0.1", features = ["download"] }
 use htg::SrtmService;
 
 let service = SrtmService::new("/path/to/hgt/files", 100);
-let elevation = service.get_elevation(35.6762, 139.6503)?;
-println!("Elevation: {}m", elevation);
+
+// Returns Ok(Some(elevation)) or Ok(None) for void/missing data
+if let Some(elevation) = service.get_elevation(35.6762, 139.6503)? {
+    println!("Elevation: {}m", elevation);
+}
+
+// Batch queries with default value for void/missing
+let coords = vec![(35.6762, 139.6503), (27.9881, 86.9250)];
+let elevations = service.get_elevations_batch(&coords, 0);
 ```
 
 ### With Auto-Download (ArduPilot)
@@ -236,7 +250,7 @@ let service = SrtmServiceBuilder::new("/data/srtm")
     .build()?;
 
 // Will download N35E139.hgt from ArduPilot if not present locally
-let elevation = service.get_elevation(35.6762, 139.6503)?;
+let elevation = service.get_elevation(35.6762, 139.6503)?; // Option<i16>
 ```
 
 ### With Custom URL Template
@@ -252,7 +266,7 @@ let service = SrtmServiceBuilder::new("/data/srtm")
     .build()?;
 
 // Will download N35E139.hgt if not present locally
-let elevation = service.get_elevation(35.6762, 139.6503)?;
+let elevation = service.get_elevation(35.6762, 139.6503)?; // Option<i16>
 ```
 
 ### From Environment Variables
@@ -261,7 +275,7 @@ let elevation = service.get_elevation(35.6762, 139.6503)?;
 use htg::SrtmServiceBuilder;
 
 let service = SrtmServiceBuilder::from_env()?.build()?;
-let elevation = service.get_elevation(35.6762, 139.6503)?;
+let elevation = service.get_elevation(35.6762, 139.6503)?; // Option<i16>
 ```
 
 ## CLI Tool
@@ -359,6 +373,36 @@ htg --data-dir /path/to/srtm --cache-size 50 --auto-download query --lat 35.5 --
 | `-c, --cache-size` | Maximum tiles in cache (default: 100) |
 | `-a, --auto-download` | Enable automatic tile download from ArduPilot |
 
+## Python Bindings
+
+The `srtm` Python package provides native bindings via PyO3. Supports Python 3.8-3.13.
+
+### Installation
+
+```bash
+pip install srtm
+```
+
+### Usage
+
+```python
+import srtm
+
+service = srtm.SrtmService("/path/to/srtm", cache_size=100)
+
+# Single query — returns None for void/missing data
+elevation = service.get_elevation(35.3606, 138.7274)
+if elevation is not None:
+    print(f"Elevation: {elevation}m")
+
+# Interpolated query
+elevation = service.get_elevation_interpolated(35.3606, 138.7274)
+
+# Batch query — efficient, single FFI crossing
+coords = [(35.3606, 138.7274), (27.9881, 86.9250)]
+elevations = service.get_elevations_batch(coords, default=0)
+```
+
 ## SRTM Data
 
 ### Data Format
@@ -374,7 +418,7 @@ htg --data-dir /path/to/srtm --cache-size 50 --auto-download query --lat 35.5 --
 - [USGS Earth Explorer](https://earthexplorer.usgs.gov/) - Official source
 - [OpenTopography](https://opentopography.org/) - Academic/research access
 
-Place downloaded `.hgt` files in your `HTG_DATA_DIR` directory.
+Place downloaded `.hgt` or `.hgt.zip` files in your `HTG_DATA_DIR` directory. ZIP files are transparently extracted on first access.
 
 ## Performance
 

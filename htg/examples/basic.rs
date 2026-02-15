@@ -27,11 +27,11 @@ fn main() -> Result<(), SrtmError> {
 
     for (name, lat, lon) in &locations {
         match service.get_elevation(*lat, *lon) {
-            Ok(elevation) => {
+            Ok(Some(elevation)) => {
                 println!("{}: {}m", name, elevation);
             }
-            Err(SrtmError::FileNotFound { .. }) => {
-                println!("{}: tile not available locally", name);
+            Ok(None) => {
+                println!("{}: no data available", name);
             }
             Err(e) => {
                 println!("{}: error - {}", name, e);

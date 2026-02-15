@@ -121,14 +121,9 @@ fn process_csv(
             service
                 .get_elevation(lat, lon)
                 .ok()
-                .map(|e| {
-                    if e == htg::VOID_VALUE {
-                        "void".to_string()
-                    } else {
-                        e.to_string()
-                    }
-                })
-                .unwrap_or_else(|| "error".to_string())
+                .flatten()
+                .map(|e| e.to_string())
+                .unwrap_or_else(|| "void".to_string())
         };
 
         let mut new_record: Vec<&str> = record.iter().collect();
@@ -225,7 +220,7 @@ fn add_elevations_to_geometry(
                     .flatten()
                     .unwrap_or(0.0)
             } else {
-                service.get_elevation(lat, lon).ok().unwrap_or(0) as f64
+                service.get_elevation(lat, lon).ok().flatten().unwrap_or(0) as f64
             };
             if pos.len() == 2 {
                 pos.push(elevation);

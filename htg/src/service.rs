@@ -30,7 +30,7 @@ use moka::sync::Cache;
 
 use crate::error::{Result, SrtmError};
 use crate::filename::lat_lon_to_filename;
-use crate::tile::SrtmTile;
+use crate::tile::{SrtmTile, VOID_VALUE};
 
 #[cfg(feature = "download")]
 use crate::download::{DownloadConfig, Downloader};
@@ -166,20 +166,29 @@ impl SrtmService {
     ///
     /// # Returns
     ///
-    /// The elevation in meters, or an error if:
-    /// - Coordinates are outside SRTM coverage (±60° latitude)
-    /// - The required `.hgt` file is not found
-    /// - The file is corrupted or has invalid size
+    /// - `Ok(Some(elevation))` - elevation in meters
+    /// - `Ok(None)` - void data, missing tile, or tile not available
+    /// - `Err(...)` - coordinates out of bounds, corrupted file, or I/O error
     ///
     /// # Example
     ///
     /// ```ignore
     /// let elevation = service.get_elevation(19.4326, -99.1332)?; // Mexico City
-    /// println!("Elevation: {}m", elevation);
+    /// if let Some(elev) = elevation {
+    ///     println!("Elevation: {}m", elev);
+    /// }
     /// ```
-    pub fn get_elevation(&self, lat: f64, lon: f64) -> Result<i16> {
-        let tile = self.load_tile_for_coords(lat, lon)?;
-        tile.get_elevation(lat, lon)
+    pub fn get_elevation(&self, lat: f64, lon: f64) -> Result<Option<i16>> {
+        match self.load_tile_for_coords(lat, lon) {
+            Ok(tile) => {
+                let v = tile.get_elevation(lat, lon)?;
+                Ok(if v == VOID_VALUE { None } else { Some(v) })
+            }
+            Err(SrtmError::FileNotFound { .. }) | Err(SrtmError::TileNotAvailable { .. }) => {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
     }
 
     /// Get elevation for the given coordinates using bilinear interpolation.
@@ -207,8 +216,41 @@ impl SrtmService {
     /// }
     /// ```
     pub fn get_elevation_interpolated(&self, lat: f64, lon: f64) -> Result<Option<f64>> {
-        let tile = self.load_tile_for_coords(lat, lon)?;
-        tile.get_elevation_interpolated(lat, lon)
+        match self.load_tile_for_coords(lat, lon) {
+            Ok(tile) => tile.get_elevation_interpolated(lat, lon),
+            Err(SrtmError::FileNotFound { .. }) | Err(SrtmError::TileNotAvailable { .. }) => {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
+    /// Get elevations for a batch of coordinates.
+    ///
+    /// Returns a vector of elevation values, one per input coordinate.
+    /// Uses `default` for void data, missing tiles, or errors.
+    ///
+    /// # Arguments
+    ///
+    /// * `coords` - Slice of (latitude, longitude) pairs
+    /// * `default` - Default value for void/missing/error results
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let coords = vec![(35.3606, 138.7274), (27.9881, 86.9250)];
+    /// let elevations = service.get_elevations_batch(&coords, 0);
+    /// ```
+    pub fn get_elevations_batch(&self, coords: &[(f64, f64)], default: i16) -> Vec<i16> {
+        coords
+            .iter()
+            .map(|&(lat, lon)| {
+                self.get_elevation(lat, lon)
+                    .ok()
+                    .flatten()
+                    .unwrap_or(default)
+            })
+            .collect()
     }
 
     /// Validate coordinates and load the appropriate tile.
@@ -241,23 +283,29 @@ impl SrtmService {
 
         let path = self.data_dir.join(filename);
 
-        // If file doesn't exist, try to download it
+        // If file doesn't exist, try zip extraction or download
         if !path.exists() {
-            #[cfg(feature = "download")]
-            {
-                if let Some(ref downloader) = self.downloader {
-                    // Try to download the tile
-                    downloader.download_tile_by_name(filename, &self.data_dir)?;
-                } else {
-                    return Err(SrtmError::TileNotAvailable {
-                        filename: filename.to_string(),
-                    });
+            // Check for local .hgt.zip file
+            let zip_path = self.data_dir.join(format!("{}.zip", filename));
+            if zip_path.exists() {
+                self.extract_hgt_from_zip(&zip_path, filename)?;
+            } else {
+                #[cfg(feature = "download")]
+                {
+                    if let Some(ref downloader) = self.downloader {
+                        // Try to download the tile
+                        downloader.download_tile_by_name(filename, &self.data_dir)?;
+                    } else {
+                        return Err(SrtmError::TileNotAvailable {
+                            filename: filename.to_string(),
+                        });
+                    }
                 }
-            }
 
-            #[cfg(not(feature = "download"))]
-            {
-                return Err(SrtmError::FileNotFound { path });
+                #[cfg(not(feature = "download"))]
+                {
+                    return Err(SrtmError::FileNotFound { path });
+                }
             }
         }
 
@@ -270,6 +318,39 @@ impl SrtmService {
         self.tile_cache.insert(filename.to_string(), tile.clone());
 
         Ok(tile)
+    }
+
+    /// Extract an .hgt file from a local .hgt.zip archive.
+    fn extract_hgt_from_zip(&self, zip_path: &Path, filename: &str) -> Result<()> {
+        let file = std::fs::File::open(zip_path).map_err(SrtmError::Io)?;
+        let mut archive = zip::ZipArchive::new(file)
+            .map_err(|e| SrtmError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e)))?;
+
+        // Look for the .hgt file inside the archive
+        let mut found = false;
+        for i in 0..archive.len() {
+            let mut entry = archive.by_index(i).map_err(|e| {
+                SrtmError::Io(std::io::Error::new(std::io::ErrorKind::InvalidData, e))
+            })?;
+
+            let entry_name = entry.name().to_string();
+            if entry_name.ends_with(".hgt") || entry_name == filename {
+                let out_path = self.data_dir.join(filename);
+                let mut out_file = std::fs::File::create(&out_path)?;
+                std::io::copy(&mut entry, &mut out_file)?;
+                found = true;
+                break;
+            }
+        }
+
+        if !found {
+            return Err(SrtmError::Io(std::io::Error::new(
+                std::io::ErrorKind::NotFound,
+                format!("No .hgt file found in {}", zip_path.display()),
+            )));
+        }
+
+        Ok(())
     }
 
     /// Check if auto-download is enabled.
@@ -573,7 +654,7 @@ mod tests {
 
         // Query center of tile
         let elevation = service.get_elevation(35.5, 138.5).unwrap();
-        assert_eq!(elevation, 500);
+        assert_eq!(elevation, Some(500));
     }
 
     #[test]
@@ -609,8 +690,8 @@ mod tests {
         let elev1 = service.get_elevation(35.5, 138.5).unwrap();
         let elev2 = service.get_elevation(36.5, 138.5).unwrap();
 
-        assert_eq!(elev1, 500);
-        assert_eq!(elev2, 1000);
+        assert_eq!(elev1, Some(500));
+        assert_eq!(elev2, Some(1000));
 
         let stats = service.cache_stats();
         // Verify miss count (entry_count may be lazy)
@@ -636,28 +717,77 @@ mod tests {
         let temp_dir = TempDir::new().unwrap();
         let service = SrtmService::new(temp_dir.path(), 10);
 
-        // Query for a tile that doesn't exist
-        let result = service.get_elevation(50.0, 50.0);
-        assert!(result.is_err());
+        // Query for a tile that doesn't exist — returns Ok(None)
+        let result = service.get_elevation(50.0, 50.0).unwrap();
+        assert_eq!(result, None);
+    }
 
-        // Error type depends on whether download feature is enabled
-        #[cfg(not(feature = "download"))]
-        {
-            if let Err(SrtmError::FileNotFound { path }) = result {
-                assert!(path.to_string_lossy().contains("N50E050.hgt"));
-            } else {
-                panic!("Expected FileNotFound error");
-            }
-        }
+    #[test]
+    fn test_missing_file_interpolated() {
+        let temp_dir = TempDir::new().unwrap();
+        let service = SrtmService::new(temp_dir.path(), 10);
 
-        #[cfg(feature = "download")]
-        {
-            if let Err(SrtmError::TileNotAvailable { filename }) = result {
-                assert!(filename.contains("N50E050"));
-            } else {
-                panic!("Expected TileNotAvailable error");
-            }
-        }
+        // Query for a tile that doesn't exist — returns Ok(None)
+        let result = service.get_elevation_interpolated(50.0, 50.0).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_void_data_returns_none() {
+        let temp_dir = TempDir::new().unwrap();
+        // Create tile where center elevation is VOID_VALUE
+        create_test_tile(temp_dir.path(), "N35E138.hgt", VOID_VALUE);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // Void data returns None
+        let result = service.get_elevation(35.5, 138.5).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_get_elevations_batch() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        let coords = vec![
+            (35.5, 138.5), // valid tile, center = 500
+            (50.0, 50.0),  // missing tile
+            (35.1, 138.1), // valid tile, edge = 0 (default data)
+        ];
+        let results = service.get_elevations_batch(&coords, -1);
+
+        assert_eq!(results[0], 500);
+        assert_eq!(results[1], -1); // missing tile → default
+                                    // Third result is 0 (zero-filled tile data), which is a valid value
+        assert_eq!(results[2], 0);
+    }
+
+    #[test]
+    fn test_hgt_zip_extraction() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a .hgt file and zip it
+        let hgt_data = vec![0u8; SRTM3_SIZE];
+        let zip_path = temp_dir.path().join("N40E010.hgt.zip");
+        let file = fs::File::create(&zip_path).unwrap();
+        let mut zip_writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip_writer.start_file("N40E010.hgt", options).unwrap();
+        zip_writer.write_all(&hgt_data).unwrap();
+        zip_writer.finish().unwrap();
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // Query should extract from zip and return elevation
+        let result = service.get_elevation(40.5, 10.5).unwrap();
+        assert_eq!(result, Some(0)); // zero-filled data
+
+        // Extracted .hgt file should now exist
+        assert!(temp_dir.path().join("N40E010.hgt").exists());
     }
 
     #[test]

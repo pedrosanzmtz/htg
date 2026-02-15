@@ -22,8 +22,12 @@ fn main() -> Result<(), SrtmError> {
 
     // Nearest-neighbor lookup
     match service.get_elevation(lat, lon) {
-        Ok(elevation) => {
+        Ok(Some(elevation)) => {
             println!("Nearest-neighbor: {}m", elevation);
+        }
+        Ok(None) => {
+            println!("No data available");
+            return Ok(());
         }
         Err(e) => {
             println!("Error: {}", e);
