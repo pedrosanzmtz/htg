@@ -1,6 +1,6 @@
-# htg - High-performance SRTM Elevation Library
+# srtm - High-performance SRTM Elevation Library
 
-[![PyPI](https://img.shields.io/pypi/v/htg.svg)](https://pypi.org/project/htg/)
+[![PyPI](https://img.shields.io/pypi/v/srtm.svg)](https://pypi.org/project/srtm/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Ultra-fast SRTM elevation queries in Python.** Built with Rust, delivering **3.5x faster** performance than the most popular Python SRTM library.
@@ -13,6 +13,8 @@ Python bindings for the [htg](https://github.com/pedrosanzmtz/htg) Rust library,
 pip install srtm
 ```
 
+Prebuilt wheels are available for Python 3.12+ on Linux (x86_64, aarch64), macOS (Apple Silicon, x86_64), and Windows (x86_64).
+
 ## Quick Start
 
 ```python
@@ -22,16 +24,40 @@ import srtm
 service = srtm.SrtmService("/path/to/srtm", cache_size=100)
 
 # Query elevation (Mount Fuji)
+# Returns None for void data or missing tiles
 elevation = service.get_elevation(35.3606, 138.7274)
-print(f"Elevation: {elevation}m")  # 3776
+if elevation is not None:
+    print(f"Elevation: {elevation}m")  # 3776
 
 # Interpolated query for smoother results
+# Returns None if any surrounding point is void
 elevation = service.get_elevation_interpolated(35.3606, 138.7274)
-print(f"Elevation: {elevation:.2f}m")  # 3776.42
+if elevation is not None:
+    print(f"Elevation: {elevation:.2f}m")  # 3776.42
 
 # Check cache performance
 stats = service.cache_stats()
 print(f"Cache hit rate: {stats.hit_rate:.1%}")
+```
+
+## Batch Queries
+
+Query multiple coordinates efficiently in a single call:
+
+```python
+import srtm
+
+service = srtm.SrtmService("/path/to/srtm", cache_size=100)
+
+coords = [
+    (35.3606, 138.7274),  # Mount Fuji
+    (27.9881, 86.9250),   # Mount Everest
+    (46.8523, 9.1512),    # Piz Bernina
+]
+
+# Returns a list of elevations; uses default (0) for void/missing data
+elevations = service.get_elevations_batch(coords, default=0)
+print(elevations)  # [3776, 8752, 3148]
 ```
 
 ## Utility Functions
@@ -53,23 +79,25 @@ print(srtm.VOID_VALUE)  # -32768
 
 ## SRTM Data
 
-Download SRTM .hgt files from:
+Download SRTM `.hgt` files from:
 - https://dwtkns.com/srtm30m/
 - https://earthexplorer.usgs.gov/
 
+Both `.hgt` and `.hgt.zip` files are supported. ZIP files are transparently extracted on first access.
+
 ## Performance
 
-htg-python delivers **exceptional performance** through its Rust core and PyO3 bindings, significantly outperforming traditional Python SRTM libraries.
+srtm delivers **exceptional performance** through its Rust core and PyO3 bindings, significantly outperforming traditional Python SRTM libraries.
 
 ### Benchmarks vs Popular Python Libraries
 
 Comparison using **local .hgt files only** (fair, apples-to-apples test):
 
-| Library | Implementation | Per Query | Throughput | vs htg-python |
-|---------|----------------|-----------|------------|---------------|
-| **htg-python** | Rust + PyO3 | **0.41 μs** | **2,419,110 q/s** | 1.0x (baseline) ⚡ |
-| **[srtm.py](https://github.com/tkrajina/srtm.py)** | Pure Python (256 ⭐) | 1.43 μs | 697,654 q/s | **3.5x slower** |
-| **[srtm4](https://github.com/centreborelli/srtm4)** | Python + C++ subprocess | 99,630 μs | 10 q/s | **241,017x slower** |
+| Library | Implementation | Per Query | Throughput | vs srtm |
+|---------|----------------|-----------|------------|---------|
+| **srtm** | Rust + PyO3 | **0.41 us** | **2,419,110 q/s** | 1.0x (baseline) |
+| **[srtm.py](https://github.com/tkrajina/srtm.py)** | Pure Python (256 stars) | 1.43 us | 697,654 q/s | **3.5x slower** |
+| **[srtm4](https://github.com/centreborelli/srtm4)** | Python + C++ subprocess | 99,630 us | 10 q/s | **241,017x slower** |
 
 **Key findings:**
 - **3.5x faster** than srtm.py (most popular, fair comparison)
@@ -77,7 +105,7 @@ Comparison using **local .hgt files only** (fair, apples-to-apples test):
 - **Sub-microsecond latency** - queries complete in 0.41 microseconds
 - **2.4 million queries/second** on a single thread
 
-*Benchmark environment: Python 3.12, macOS (Apple Silicon). See [BENCHMARKS.md](../BENCHMARKS.md) for full methodology.*
+*Benchmark environment: Python 3.12, macOS (Apple Silicon). See [BENCHMARKS.md](https://github.com/pedrosanzmtz/htg/blob/main/BENCHMARKS.md) for full methodology.*
 
 ### Why So Fast?
 
