@@ -10,7 +10,7 @@ Building a high-performance, memory-efficient microservice to return elevation d
 ## Current Status
 
 **Phase:** All core phases complete (1-5)
-**Latest Features:** Bilinear interpolation, GeoJSON batch queries, auto-download, ArduPilot source support
+**Latest Features:** Safe Option-based elevation API (v0.3.0), batch query API, .hgt.zip support, bilinear interpolation, GeoJSON batch queries, auto-download, ArduPilot source support
 
 ### Open Issues
 - #6: Publish htg library to crates.io
@@ -43,6 +43,9 @@ Building a high-performance, memory-efficient microservice to return elevation d
 6. **Bilinear Interpolation:** Sub-pixel accuracy for elevation queries
 7. **GeoJSON Batch Queries:** Process multiple coordinates in one request
 8. **REST API:** HTTP endpoints for elevation queries
+9. **Safe Option API:** Service-level methods return `Option` for void/missing data (v0.3.0)
+10. **Batch Query API:** `get_elevations_batch()` for efficient multi-coordinate queries
+11. **ZIP Support:** Transparent extraction of local `.hgt.zip` files
 
 ### Reference Implementation
 The Go library `asmyasnikov/srtm` was used as algorithm reference:
@@ -58,12 +61,15 @@ Axum Web Service
 Filename Calculator: (lat, lon) → "N35E138.hgt"
     ↓
 Tile Cache (LRU): Check if tile already loaded
-    ↓                           ↓ (cache miss + auto-download enabled)
-Tile Loader: Memory-map        Download from configured URL
+    ↓                    ↓ (cache miss)
+    ↓              Check for .hgt.zip → extract if found
+    ↓                    ↓ (no local file + auto-download enabled)
+Tile Loader:       Download from configured URL
+Memory-map
     ↓
 Elevation Extractor: Nearest-neighbor or bilinear interpolation
     ↓
-Return elevation value (i16 or f64)
+Return Option<elevation> (None for void/missing)
 ```
 
 ## Tech Stack
@@ -72,6 +78,7 @@ Return elevation value (i16 or f64)
 - `memmap2` - Memory-mapped file I/O
 - `moka` - LRU cache with async support
 - `thiserror` - Error handling
+- `zip` - ZIP archive extraction for `.hgt.zip` support
 
 ### Optional Dependencies (htg library)
 - `reqwest` - HTTP client for auto-download (feature: `download`)
@@ -94,7 +101,7 @@ Return elevation value (i16 or f64)
 
 ## Project Structure
 
-This is a **Cargo workspace** with three crates:
+This is a **Cargo workspace** with four crates:
 
 ```
 htg/                            # Workspace root
@@ -127,22 +134,32 @@ htg/                            # Workspace root
 │   │   └── handlers.rs         # HTTP handlers (GET/POST elevation)
 │   └── tests/
 │       └── api_tests.rs        # Integration tests
-└── htg-cli/                    # CLI tool binary
+├── htg-cli/                    # CLI tool binary
+│   ├── Cargo.toml
+│   └── src/
+│       ├── main.rs             # CLI entry point with clap
+│       └── commands/
+│           ├── mod.rs          # Command module exports
+│           ├── query.rs        # Single point elevation queries
+│           ├── batch.rs        # CSV/GeoJSON batch processing
+│           ├── info.rs         # Tile information display
+│           └── list.rs         # List available tiles
+└── htg-python/                 # Python bindings (PyPI: srtm)
     ├── Cargo.toml
-    └── src/
-        ├── main.rs             # CLI entry point with clap
-        └── commands/
-            ├── mod.rs          # Command module exports
-            ├── query.rs        # Single point elevation queries
-            ├── batch.rs        # CSV/GeoJSON batch processing
-            ├── info.rs         # Tile information display
-            └── list.rs         # List available tiles
+    ├── pyproject.toml
+    ├── src/
+    │   └── lib.rs              # PyO3 bindings
+    └── python/
+        └── srtm/
+            ├── __init__.py     # Re-exports from native module
+            └── __init__.pyi    # Type stubs
 ```
 
 ### Publishing Targets
 - **htg** library → crates.io
 - **htg-service** binary → DockerHub
 - **htg-cli** binary → crates.io (cargo install)
+- **htg-python** (srtm) → PyPI
 
 ## API Endpoints
 
@@ -216,11 +233,13 @@ curl "http://localhost:8080/stats"
 
 ### Phase 3: Caching Layer ✓
 - [x] `SrtmService` struct with `Cache<String, Arc<SrtmTile>>`
-- [x] `get_elevation(lat: f64, lon: f64)` - cache hit/miss logic
-- [x] `get_elevation_interpolated()` - interpolation support
+- [x] `get_elevation(lat, lon) → Result<Option<i16>>` - returns None for void/missing
+- [x] `get_elevation_interpolated(lat, lon) → Result<Option<f64>>` - returns None for void/missing
+- [x] `get_elevations_batch(coords, default) → Vec<i16>` - batch queries
 - [x] Configurable cache size
 - [x] Cache statistics (hits, misses, hit rate)
 - [x] Auto-download missing tiles (optional feature)
+- [x] Transparent `.hgt.zip` extraction
 
 ### Phase 4: HTTP API ✓
 - [x] Axum router with GET `/elevation` endpoint
@@ -273,6 +292,8 @@ fn lat_lon_to_filename(lat: f64, lon: f64) -> String {
 ```
 
 ### 2. Elevation Extraction (Nearest-Neighbor)
+
+**Tile-level** (raw value, may return VOID_VALUE -32768):
 ```rust
 fn get_elevation(&self, lat: f64, lon: f64) -> Result<i16> {
     let lat_frac = lat - lat.floor();
@@ -285,6 +306,16 @@ fn get_elevation(&self, lat: f64, lon: f64) -> Result<i16> {
     let offset = (row * self.samples + col) * 2;
     Ok(i16::from_be_bytes([self.data[offset], self.data[offset + 1]]))
 }
+```
+
+**Service-level** (safe, returns `Option`):
+```rust
+// Returns Ok(None) for void data, missing tiles, or unavailable tiles
+// Returns Err only for out-of-bounds coordinates or I/O errors
+fn get_elevation(&self, lat: f64, lon: f64) -> Result<Option<i16>>
+
+// Batch queries with default for void/missing/error
+fn get_elevations_batch(&self, coords: &[(f64, f64)], default: i16) -> Vec<i16>
 ```
 
 ### 3. Bilinear Interpolation
@@ -330,8 +361,8 @@ cargo test -p htg-service
 ```
 
 ### Test Coverage
-- **htg library:** 35 unit tests
-- **htg-service:** 14 integration tests
+- **htg library:** 58 unit tests (includes download feature tests)
+- **htg-service:** 3 unit tests + 14 integration tests
 - **Doc tests:** 2 tests
 
 ### CI/CD Pipeline
@@ -449,6 +480,8 @@ htg --auto-download query --lat 35.3606 --lon 138.7274
 5. **Error Handling:** Gracefully handle missing .hgt files
 6. **Void Values:** -32768 indicates no data, handle in interpolation
 7. **GeoJSON Coordinate Order:** GeoJSON uses [lon, lat], not [lat, lon]
+8. **Tile vs Service API:** Tile-level methods return raw values (including VOID_VALUE); service-level methods return `Option` (None for void/missing). Use tile API for raw access, service API for safe queries.
+9. **Breaking Change (v0.3.0):** `SrtmService::get_elevation()` returns `Result<Option<i16>>` not `Result<i16>`. Callers must handle `Some`/`None`.
 
 ## Resources
 

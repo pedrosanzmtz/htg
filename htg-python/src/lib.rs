@@ -85,14 +85,27 @@ impl SrtmService {
     ///     lon: Longitude in decimal degrees (-180 to 180).
     ///
     /// Returns:
-    ///     Elevation in meters.
+    ///     Elevation in meters, or None if no data available (void, missing tile).
     ///
     /// Raises:
-    ///     ValueError: If coordinates are out of bounds or tile is not found.
-    fn get_elevation(&self, lat: f64, lon: f64) -> PyResult<i16> {
+    ///     ValueError: If coordinates are out of bounds.
+    fn get_elevation(&self, lat: f64, lon: f64) -> PyResult<Option<i16>> {
         self.inner
             .get_elevation(lat, lon)
             .map_err(|e| PyValueError::new_err(e.to_string()))
+    }
+
+    /// Get elevations for a batch of coordinates.
+    ///
+    /// Args:
+    ///     coords: List of (lat, lon) tuples.
+    ///     default: Default value for void/missing data (default: 0).
+    ///
+    /// Returns:
+    ///     List of elevation values in meters.
+    #[pyo3(signature = (coords, default=0))]
+    fn get_elevations_batch(&self, coords: Vec<(f64, f64)>, default: i16) -> Vec<i16> {
+        self.inner.get_elevations_batch(&coords, default)
     }
 
     /// Get elevation at the specified coordinates using bilinear interpolation.

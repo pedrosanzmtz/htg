@@ -1,6 +1,6 @@
 """Type stubs for srtm - High-performance SRTM elevation library."""
 
-from typing import Optional, Tuple
+from typing import List, Optional, Tuple
 
 __version__: str
 VOID_VALUE: int
@@ -42,7 +42,7 @@ class SrtmService:
         """
         ...
 
-    def get_elevation(self, lat: float, lon: float) -> int:
+    def get_elevation(self, lat: float, lon: float) -> Optional[int]:
         """Get elevation at the specified coordinates using nearest-neighbor lookup.
 
         Args:
@@ -50,10 +50,24 @@ class SrtmService:
             lon: Longitude in decimal degrees (-180 to 180).
 
         Returns:
-            Elevation in meters.
+            Elevation in meters, or None if no data available.
 
         Raises:
-            ValueError: If coordinates are out of bounds or tile is not found.
+            ValueError: If coordinates are out of bounds.
+        """
+        ...
+
+    def get_elevations_batch(
+        self, coords: List[Tuple[float, float]], default: int = 0
+    ) -> List[int]:
+        """Get elevations for a batch of coordinates.
+
+        Args:
+            coords: List of (lat, lon) tuples.
+            default: Default value for void/missing data.
+
+        Returns:
+            List of elevation values in meters.
         """
         ...
 

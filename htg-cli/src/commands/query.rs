@@ -1,5 +1,5 @@
 use anyhow::{Context, Result};
-use htg::{download::DownloadConfig, SrtmServiceBuilder, VOID_VALUE};
+use htg::{download::DownloadConfig, SrtmServiceBuilder};
 use serde::Serialize;
 use std::path::PathBuf;
 
@@ -47,13 +47,12 @@ pub fn run(
             None => (None, true),
         }
     } else {
-        let elev = service
+        match service
             .get_elevation(lat, lon)
-            .context("Failed to get elevation")?;
-        if elev == VOID_VALUE {
-            (None, true)
-        } else {
-            (Some(elev as f64), false)
+            .context("Failed to get elevation")?
+        {
+            Some(elev) => (Some(elev as f64), false),
+            None => (None, true),
         }
     };
 

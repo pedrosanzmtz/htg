@@ -303,14 +303,16 @@ async fn test_geojson_missing_tile() {
     let temp_dir = TempDir::new().unwrap();
     let server = create_test_server(&temp_dir).await;
 
-    // No tile exists for these coordinates
+    // No tile exists for these coordinates — elevation defaults to 0
     let geometry = Geometry::new(GeoJsonValue::Point(vec![50.0, 50.0]));
 
     let response = server.post("/elevation").json(&geometry).await;
 
-    response.assert_status(axum::http::StatusCode::BAD_REQUEST);
+    response.assert_status_ok();
     let json: Value = response.json();
-    assert!(json["error"].as_str().is_some());
+    assert_eq!(json["type"], "Point");
+    let coords = json["coordinates"].as_array().unwrap();
+    assert_eq!(coords[2].as_f64().unwrap(), 0.0);
 }
 
 #[tokio::test]

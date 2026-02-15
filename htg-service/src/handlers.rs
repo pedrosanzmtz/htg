@@ -143,36 +143,28 @@ pub async fn get_elevation(
                     .into_response()
             }
             Ok(None) => {
-                // Void value in interpolation area - fall back to nearest neighbor
-                match state.srtm_service.get_elevation(query.lat, query.lon) {
-                    Ok(elevation) => {
-                        tracing::info!(
-                            lat = query.lat,
-                            lon = query.lon,
-                            elevation = elevation,
-                            interpolated = false,
-                            "Elevation found (void in interpolation area, using nearest)"
-                        );
-                        (
-                            StatusCode::OK,
-                            Json(InterpolatedElevationResponse {
-                                elevation: elevation as f64,
-                                lat: query.lat,
-                                lon: query.lon,
-                                interpolated: false,
-                            }),
-                        )
-                            .into_response()
-                    }
-                    Err(e) => error_response(query.lat, query.lon, e),
-                }
+                tracing::warn!(
+                    lat = query.lat,
+                    lon = query.lon,
+                    "No elevation data available"
+                );
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorResponse {
+                        error: format!(
+                            "No elevation data available for lat={}, lon={}",
+                            query.lat, query.lon
+                        ),
+                    }),
+                )
+                    .into_response()
             }
             Err(e) => error_response(query.lat, query.lon, e),
         }
     } else {
         // Use nearest-neighbor lookup
         match state.srtm_service.get_elevation(query.lat, query.lon) {
-            Ok(elevation) => {
+            Ok(Some(elevation)) => {
                 tracing::info!(
                     lat = query.lat,
                     lon = query.lon,
@@ -185,6 +177,23 @@ pub async fn get_elevation(
                         elevation,
                         lat: query.lat,
                         lon: query.lon,
+                    }),
+                )
+                    .into_response()
+            }
+            Ok(None) => {
+                tracing::warn!(
+                    lat = query.lat,
+                    lon = query.lon,
+                    "No elevation data available"
+                );
+                (
+                    StatusCode::NOT_FOUND,
+                    Json(ErrorResponse {
+                        error: format!(
+                            "No elevation data available for lat={}, lon={}",
+                            query.lat, query.lon
+                        ),
                     }),
                 )
                     .into_response()
