@@ -21,7 +21,7 @@ Existing elevation services (e.g., Python/Flask) consume excessive memory (7GB+)
 - **LRU Caching**: Configurable cache size to bound memory usage
 - **Safe API**: Service-level methods return `Option` for void/missing data
 - **Batch Queries**: `get_elevations_batch()` for efficient multi-coordinate lookups
-- **Python Bindings**: Native Python package via PyO3 (Python 3.8-3.13)
+- **Python Bindings**: Native Python package via PyO3 (Python 3.12+)
 - **Docker Ready**: Easy deployment with Docker/Docker Compose
 - **OpenAPI Docs**: Interactive Swagger UI at `/docs`
 
@@ -375,7 +375,7 @@ htg --data-dir /path/to/srtm --cache-size 50 --auto-download query --lat 35.5 --
 
 ## Python Bindings
 
-The `srtm` Python package provides native bindings via PyO3. Supports Python 3.8-3.13.
+The `srtm` Python package provides native bindings via PyO3. Supports Python 3.12+.
 
 ### Installation
 
