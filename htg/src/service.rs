@@ -22,7 +22,7 @@
 //! let elevation = service.get_elevation(35.5, 138.5)?;
 //! ```
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
@@ -31,7 +31,7 @@ use std::time::Instant;
 use moka::sync::Cache;
 
 use crate::error::{Result, SrtmError};
-use crate::filename::lat_lon_to_filename;
+use crate::filename::{coords_to_filename, filename_to_lat_lon};
 use crate::tile::{SrtmTile, VOID_VALUE};
 
 #[cfg(feature = "download")]
@@ -164,8 +164,8 @@ pub struct PreloadStats {
 pub struct SrtmService {
     /// Directory containing .hgt files.
     data_dir: PathBuf,
-    /// LRU cache of loaded tiles.
-    tile_cache: Cache<String, Arc<SrtmTile>>,
+    /// LRU cache of loaded tiles, keyed by (floor_lat, floor_lon).
+    tile_cache: Cache<(i32, i32), Arc<SrtmTile>>,
     /// Number of cache hits.
     hit_count: AtomicU64,
     /// Number of cache misses.
@@ -321,6 +321,9 @@ impl SrtmService {
 
     /// Get elevations for a batch of coordinates.
     ///
+    /// Coordinates are grouped by tile so that each unique tile is loaded only
+    /// once, regardless of how many coordinates fall within it.
+    ///
     /// Returns a vector of elevation values, one per input coordinate.
     /// Uses `default` for void data, missing tiles, or errors.
     ///
@@ -336,18 +339,18 @@ impl SrtmService {
     /// let elevations = service.get_elevations_batch(&coords, 0);
     /// ```
     pub fn get_elevations_batch(&self, coords: &[(f64, f64)], default: i16) -> Vec<i16> {
-        coords
-            .iter()
-            .map(|&(lat, lon)| {
-                self.get_elevation(lat, lon)
-                    .ok()
-                    .flatten()
-                    .unwrap_or(default)
-            })
-            .collect()
+        self.batch_with_tile_grouping(coords, default, |tile, lat, lon| {
+            match tile.get_elevation(lat, lon) {
+                Ok(v) if v != VOID_VALUE => Some(v),
+                _ => None,
+            }
+        })
     }
 
     /// Get elevations for a batch of coordinates using floor-based rounding.
+    ///
+    /// Coordinates are grouped by tile so that each unique tile is loaded only
+    /// once, regardless of how many coordinates fall within it.
     ///
     /// Returns a vector of elevation values, one per input coordinate.
     /// Uses floor-based rounding for srtm.py compatibility.
@@ -358,18 +361,18 @@ impl SrtmService {
     /// * `coords` - Slice of (latitude, longitude) pairs
     /// * `default` - Default value for void/missing/error results
     pub fn get_elevations_batch_floor(&self, coords: &[(f64, f64)], default: i16) -> Vec<i16> {
-        coords
-            .iter()
-            .map(|&(lat, lon)| {
-                self.get_elevation_floor(lat, lon)
-                    .ok()
-                    .flatten()
-                    .unwrap_or(default)
-            })
-            .collect()
+        self.batch_with_tile_grouping(coords, default, |tile, lat, lon| {
+            match tile.get_elevation_floor(lat, lon) {
+                Ok(v) if v != VOID_VALUE => Some(v),
+                _ => None,
+            }
+        })
     }
 
     /// Get interpolated elevations for a batch of coordinates.
+    ///
+    /// Coordinates are grouped by tile so that each unique tile is loaded only
+    /// once, regardless of how many coordinates fall within it.
     ///
     /// Returns a vector of interpolated elevation values, one per input coordinate.
     /// Uses bilinear interpolation for sub-pixel accuracy.
@@ -391,15 +394,50 @@ impl SrtmService {
         coords: &[(f64, f64)],
         default: f64,
     ) -> Vec<f64> {
-        coords
-            .iter()
-            .map(|&(lat, lon)| {
-                self.get_elevation_interpolated(lat, lon)
-                    .ok()
-                    .flatten()
-                    .unwrap_or(default)
-            })
-            .collect()
+        self.batch_with_tile_grouping(coords, default, |tile, lat, lon| {
+            tile.get_elevation_interpolated(lat, lon).ok().flatten()
+        })
+    }
+
+    /// Generic tile-grouped batch helper.
+    ///
+    /// Groups coordinates by tile key, loads each unique tile once, applies
+    /// the elevation function, and reassembles results in original input order.
+    fn batch_with_tile_grouping<T: Copy>(
+        &self,
+        coords: &[(f64, f64)],
+        default: T,
+        elevation_fn: impl Fn(&SrtmTile, f64, f64) -> Option<T>,
+    ) -> Vec<T> {
+        let mut results = vec![default; coords.len()];
+
+        // Group coordinate indices by tile key
+        let mut groups: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
+        for (i, &(lat, lon)) in coords.iter().enumerate() {
+            // Out-of-bounds coords get the default (skip grouping)
+            if !(-60.0..=60.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+                continue;
+            }
+            let key = (lat.floor() as i32, lon.floor() as i32);
+            groups.entry(key).or_default().push(i);
+        }
+
+        // Process each tile group: 1 cache lookup per tile, not per coord
+        for (key, indices) in &groups {
+            let tile = match self.load_tile(*key) {
+                Ok(t) => t,
+                Err(_) => continue, // missing tile → all coords get default
+            };
+
+            for &i in indices {
+                let (lat, lon) = coords[i];
+                if let Some(v) = elevation_fn(&tile, lat, lon) {
+                    results[i] = v;
+                }
+            }
+        }
+
+        results
     }
 
     /// Validate coordinates and load the appropriate tile.
@@ -412,42 +450,41 @@ impl SrtmService {
             return Err(SrtmError::OutOfBounds { lat, lon });
         }
 
-        // Calculate filename for this coordinate
-        let filename = lat_lon_to_filename(lat, lon);
+        // Compute tile key directly — no heap allocation
+        let key = (lat.floor() as i32, lon.floor() as i32);
 
         // Load tile (from cache or disk)
-        self.load_tile(&filename)
+        self.load_tile(key)
     }
 
     /// Load a tile from cache, disk, or download if enabled.
-    fn load_tile(&self, filename: &str) -> Result<Arc<SrtmTile>> {
-        // Check cache first
-        if let Some(tile) = self.tile_cache.get(filename) {
+    fn load_tile(&self, key: (i32, i32)) -> Result<Arc<SrtmTile>> {
+        // Check cache first — no heap allocation for the key
+        if let Some(tile) = self.tile_cache.get(&key) {
             self.hit_count.fetch_add(1, Ordering::Relaxed);
             return Ok(tile);
         }
 
-        // Cache miss - try to load from disk or download
+        // Cache miss - generate filename string only now
         self.miss_count.fetch_add(1, Ordering::Relaxed);
 
-        let path = self.data_dir.join(filename);
+        let filename = coords_to_filename(key.0, key.1);
+        let path = self.data_dir.join(&filename);
 
         // If file doesn't exist, try zip extraction or download
         if !path.exists() {
             // Check for local .hgt.zip file
             let zip_path = self.data_dir.join(format!("{}.zip", filename));
             if zip_path.exists() {
-                self.extract_hgt_from_zip(&zip_path, filename)?;
+                self.extract_hgt_from_zip(&zip_path, &filename)?;
             } else {
                 #[cfg(feature = "download")]
                 {
                     if let Some(ref downloader) = self.downloader {
                         // Try to download the tile
-                        downloader.download_tile_by_name(filename, &self.data_dir)?;
+                        downloader.download_tile_by_name(&filename, &self.data_dir)?;
                     } else {
-                        return Err(SrtmError::TileNotAvailable {
-                            filename: filename.to_string(),
-                        });
+                        return Err(SrtmError::TileNotAvailable { filename });
                     }
                 }
 
@@ -458,13 +495,10 @@ impl SrtmService {
             }
         }
 
-        // Parse base coordinates from filename for the tile
-        let (base_lat, base_lon) = crate::filename::filename_to_lat_lon(filename).unwrap_or((0, 0));
-
-        let tile = Arc::new(SrtmTile::from_file_with_coords(&path, base_lat, base_lon)?);
+        let tile = Arc::new(SrtmTile::from_file_with_coords(&path, key.0, key.1)?);
 
         // Insert into cache
-        self.tile_cache.insert(filename.to_string(), tile.clone());
+        self.tile_cache.insert(key, tile.clone());
 
         Ok(tile)
     }
@@ -532,8 +566,12 @@ impl SrtmService {
     /// Invalidate (remove) a specific tile from the cache.
     ///
     /// This can be useful if you know a tile file has been updated.
+    /// Accepts a filename (e.g., "N35E138.hgt") and parses the coordinates
+    /// to find the cache entry.
     pub fn invalidate_tile(&self, filename: &str) {
-        self.tile_cache.invalidate(filename);
+        if let Some(key) = filename_to_lat_lon(filename) {
+            self.tile_cache.invalidate(&key);
+        }
     }
 
     /// Clear all tiles from the cache.
@@ -612,17 +650,15 @@ impl SrtmService {
         let filenames = self.scan_tile_files();
 
         for filename in &filenames {
-            // Parse coordinates from filename to check bounding box
-            let coords = crate::filename::filename_to_lat_lon(filename);
+            // Parse coordinates from filename to get tile key
+            let key = match filename_to_lat_lon(filename) {
+                Some(k) => k,
+                None => continue, // Can't parse coordinates, skip
+            };
 
             // Filter by bounding boxes if provided
             if let Some(boxes) = bounds {
-                if let Some((tile_lat, tile_lon)) = coords {
-                    if !boxes.iter().any(|b| b.overlaps_tile(tile_lat, tile_lon)) {
-                        continue;
-                    }
-                } else {
-                    // Can't parse coordinates, skip
+                if !boxes.iter().any(|b| b.overlaps_tile(key.0, key.1)) {
                     continue;
                 }
             }
@@ -630,13 +666,13 @@ impl SrtmService {
             stats.tiles_matched += 1;
 
             // Check if already in cache
-            if self.tile_cache.get(filename).is_some() {
+            if self.tile_cache.get(&key).is_some() {
                 stats.tiles_already_cached += 1;
                 continue;
             }
 
             // Load the tile
-            match self.load_tile(filename) {
+            match self.load_tile(key) {
                 Ok(_) => stats.tiles_loaded += 1,
                 Err(_) => stats.tiles_failed += 1,
             }
