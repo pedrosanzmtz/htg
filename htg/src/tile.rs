@@ -114,6 +114,13 @@ impl SrtmTile {
         // while mapped. We open the file read-only and don't expose the mapping.
         let mmap = unsafe { Mmap::map(&file)? };
 
+        // Hint the kernel that access will be random (no sequential read-ahead)
+        #[cfg(unix)]
+        {
+            use memmap2::Advice;
+            let _ = mmap.advise(Advice::Random);
+        }
+
         // Detect resolution from file size
         let (samples, resolution) = match mmap.len() {
             SRTM1_SIZE => (SRTM1_SAMPLES, SrtmResolution::Srtm1),
@@ -192,7 +199,7 @@ impl SrtmTile {
         let row = rounding_fn((1.0 - lat_frac) * (self.samples - 1) as f64) as usize;
         let col = rounding_fn(lon_frac * (self.samples - 1) as f64) as usize;
 
-        self.get_elevation_at(row, col)
+        Ok(self.get_elevation_at(row, col))
     }
 
     /// Get the elevation at the specified coordinates using bilinear interpolation.
@@ -255,10 +262,10 @@ impl SrtmTile {
         let col_weight = col_pos - col0 as f64;
 
         // Get the 4 surrounding elevation values
-        let v00 = self.get_elevation_at(row0, col0)?;
-        let v10 = self.get_elevation_at(row0, col1)?;
-        let v01 = self.get_elevation_at(row1, col0)?;
-        let v11 = self.get_elevation_at(row1, col1)?;
+        let v00 = self.get_elevation_at(row0, col0);
+        let v10 = self.get_elevation_at(row0, col1);
+        let v01 = self.get_elevation_at(row1, col0);
+        let v11 = self.get_elevation_at(row1, col1);
 
         // Check for void values - if any surrounding point is void, return None
         if v00 == VOID_VALUE || v10 == VOID_VALUE || v01 == VOID_VALUE || v11 == VOID_VALUE {
@@ -282,7 +289,14 @@ impl SrtmTile {
     ///
     /// * `row` - Row index (0 = north edge)
     /// * `col` - Column index (0 = west edge)
-    fn get_elevation_at(&self, row: usize, col: usize) -> Result<i16> {
+    ///
+    /// # Safety invariant
+    ///
+    /// Callers clamp row/col to `[0, samples-1]` via `.min()`.
+    /// File size is validated at load to be exactly `samples * samples * 2`,
+    /// so `offset + 1` is always in bounds.
+    #[inline(always)]
+    fn get_elevation_at(&self, row: usize, col: usize) -> i16 {
         // Clamp to valid range
         let row = row.min(self.samples - 1);
         let col = col.min(self.samples - 1);
@@ -290,10 +304,17 @@ impl SrtmTile {
         // Calculate byte offset (2 bytes per sample, row-major order)
         let offset = (row * self.samples + col) * 2;
 
-        // Read 16-bit big-endian signed integer
-        let elevation = i16::from_be_bytes([self.data[offset], self.data[offset + 1]]);
+        debug_assert!(offset + 1 < self.data.len());
 
-        Ok(elevation)
+        // SAFETY: row and col are clamped to [0, samples-1].
+        // File size is validated at load to be exactly samples*samples*2,
+        // so offset+1 is always within bounds.
+        unsafe {
+            i16::from_be_bytes([
+                *self.data.get_unchecked(offset),
+                *self.data.get_unchecked(offset + 1),
+            ])
+        }
     }
 
     /// Returns the resolution of this tile.

@@ -487,6 +487,33 @@ cargo build --release -p htg-service
 HTG_DATA_DIR=./data/srtm cargo run -p htg-service
 ```
 
+### Micro-Benchmarks (Criterion)
+
+The `htg` library includes Criterion benchmarks for core elevation operations:
+
+```bash
+# Run all benchmarks
+cargo bench -p htg
+
+# Run a specific benchmark
+cargo bench -p htg -- single_nearest
+```
+
+Benchmarks cover single-point nearest-neighbor, single-point interpolated, batch 1000 same-tile, and batch 1000 multi-tile queries.
+
+### Release Profile
+
+The workspace uses an optimized release profile with fat LTO and single codegen unit for maximum performance:
+
+```toml
+[profile.release]
+lto = "fat"
+codegen-units = 1
+opt-level = 3
+```
+
+This enables cross-crate inlining (important for `htg-python` and `htg-service`) at the cost of longer release build times.
+
 ### Docker Build
 
 ```bash

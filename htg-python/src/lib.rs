@@ -130,21 +130,32 @@ impl SrtmService {
     /// Raises:
     ///     ValueError: If coordinates are out of bounds or rounding is invalid.
     #[pyo3(signature = (lat, lon, rounding="nearest"))]
-    fn get_elevation(&self, lat: f64, lon: f64, rounding: &str) -> PyResult<Option<i16>> {
-        match rounding {
-            "nearest" => self
-                .inner
-                .get_elevation(lat, lon)
-                .map_err(|e| PyValueError::new_err(e.to_string())),
-            "floor" => self
-                .inner
-                .get_elevation_floor(lat, lon)
-                .map_err(|e| PyValueError::new_err(e.to_string())),
-            _ => Err(PyValueError::new_err(format!(
-                "Invalid rounding mode '{}'. Use 'nearest' or 'floor'.",
-                rounding
-            ))),
-        }
+    fn get_elevation(
+        &self,
+        py: Python<'_>,
+        lat: f64,
+        lon: f64,
+        rounding: &str,
+    ) -> PyResult<Option<i16>> {
+        let use_floor = match rounding {
+            "nearest" => false,
+            "floor" => true,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid rounding mode '{}'. Use 'nearest' or 'floor'.",
+                    rounding
+                )))
+            }
+        };
+        let inner = Arc::clone(&self.inner);
+        let result = py.allow_threads(move || {
+            if use_floor {
+                inner.get_elevation_floor(lat, lon)
+            } else {
+                inner.get_elevation(lat, lon)
+            }
+        });
+        result.map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     /// Get elevations for a batch of coordinates.
@@ -164,18 +175,29 @@ impl SrtmService {
     #[pyo3(signature = (coords, default=0, rounding="nearest"))]
     fn get_elevations_batch(
         &self,
+        py: Python<'_>,
         coords: Vec<(f64, f64)>,
         default: i16,
         rounding: &str,
     ) -> PyResult<Vec<i16>> {
-        match rounding {
-            "nearest" => Ok(self.inner.get_elevations_batch(&coords, default)),
-            "floor" => Ok(self.inner.get_elevations_batch_floor(&coords, default)),
-            _ => Err(PyValueError::new_err(format!(
-                "Invalid rounding mode '{}'. Use 'nearest' or 'floor'.",
-                rounding
-            ))),
-        }
+        let use_floor = match rounding {
+            "nearest" => false,
+            "floor" => true,
+            _ => {
+                return Err(PyValueError::new_err(format!(
+                    "Invalid rounding mode '{}'. Use 'nearest' or 'floor'.",
+                    rounding
+                )))
+            }
+        };
+        let inner = Arc::clone(&self.inner);
+        Ok(py.allow_threads(move || {
+            if use_floor {
+                inner.get_elevations_batch_floor(&coords, default)
+            } else {
+                inner.get_elevations_batch(&coords, default)
+            }
+        }))
     }
 
     /// Get interpolated elevations for a batch of coordinates.
@@ -189,9 +211,14 @@ impl SrtmService {
     /// Returns:
     ///     List of interpolated elevation values in meters.
     #[pyo3(signature = (coords, default=0.0))]
-    fn get_elevations_batch_interpolated(&self, coords: Vec<(f64, f64)>, default: f64) -> Vec<f64> {
-        self.inner
-            .get_elevations_batch_interpolated(&coords, default)
+    fn get_elevations_batch_interpolated(
+        &self,
+        py: Python<'_>,
+        coords: Vec<(f64, f64)>,
+        default: f64,
+    ) -> Vec<f64> {
+        let inner = Arc::clone(&self.inner);
+        py.allow_threads(move || inner.get_elevations_batch_interpolated(&coords, default))
     }
 
     /// Get elevation at the specified coordinates using bilinear interpolation.
@@ -207,10 +234,15 @@ impl SrtmService {
     ///
     /// Raises:
     ///     ValueError: If coordinates are out of bounds or tile is not found.
-    fn get_elevation_interpolated(&self, lat: f64, lon: f64) -> PyResult<Option<f64>> {
-        self.inner
-            .get_elevation_interpolated(lat, lon)
-            .map_err(|e| PyValueError::new_err(e.to_string()))
+    fn get_elevation_interpolated(
+        &self,
+        py: Python<'_>,
+        lat: f64,
+        lon: f64,
+    ) -> PyResult<Option<f64>> {
+        let inner = Arc::clone(&self.inner);
+        let result = py.allow_threads(move || inner.get_elevation_interpolated(lat, lon));
+        result.map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
     /// Preload tiles into the LRU cache.

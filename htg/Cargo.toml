@@ -30,3 +30,8 @@ geojson = { version = "0.24", optional = true }
 
 [dev-dependencies]
 tempfile = "3.8"
+criterion = { version = "0.5", features = ["html_reports"] }
+
+[[bench]]
+name = "elevation"
+harness = false
