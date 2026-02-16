@@ -191,6 +191,35 @@ impl SrtmService {
         }
     }
 
+    /// Get elevation using floor-based rounding (srtm.py compatible).
+    ///
+    /// This method uses `floor()` instead of `round()` for grid cell selection,
+    /// producing results compatible with srtm.py. The difference is typically
+    /// 1-3 meters for coordinates near grid cell boundaries.
+    ///
+    /// # Arguments
+    ///
+    /// * `lat` - Latitude in decimal degrees (-60 to 60)
+    /// * `lon` - Longitude in decimal degrees (-180 to 180)
+    ///
+    /// # Returns
+    ///
+    /// - `Ok(Some(elevation))` - elevation in meters
+    /// - `Ok(None)` - void data, missing tile, or tile not available
+    /// - `Err(...)` - coordinates out of bounds, corrupted file, or I/O error
+    pub fn get_elevation_floor(&self, lat: f64, lon: f64) -> Result<Option<i16>> {
+        match self.load_tile_for_coords(lat, lon) {
+            Ok(tile) => {
+                let v = tile.get_elevation_floor(lat, lon)?;
+                Ok(if v == VOID_VALUE { None } else { Some(v) })
+            }
+            Err(SrtmError::FileNotFound { .. }) | Err(SrtmError::TileNotAvailable { .. }) => {
+                Ok(None)
+            }
+            Err(e) => Err(e),
+        }
+    }
+
     /// Get elevation for the given coordinates using bilinear interpolation.
     ///
     /// This method interpolates between the 4 surrounding grid points for sub-pixel
@@ -246,6 +275,28 @@ impl SrtmService {
             .iter()
             .map(|&(lat, lon)| {
                 self.get_elevation(lat, lon)
+                    .ok()
+                    .flatten()
+                    .unwrap_or(default)
+            })
+            .collect()
+    }
+
+    /// Get elevations for a batch of coordinates using floor-based rounding.
+    ///
+    /// Returns a vector of elevation values, one per input coordinate.
+    /// Uses floor-based rounding for srtm.py compatibility.
+    /// Uses `default` for void data, missing tiles, or errors.
+    ///
+    /// # Arguments
+    ///
+    /// * `coords` - Slice of (latitude, longitude) pairs
+    /// * `default` - Default value for void/missing/error results
+    pub fn get_elevations_batch_floor(&self, coords: &[(f64, f64)], default: i16) -> Vec<i16> {
+        coords
+            .iter()
+            .map(|&(lat, lon)| {
+                self.get_elevation_floor(lat, lon)
                     .ok()
                     .flatten()
                     .unwrap_or(default)
@@ -880,6 +931,44 @@ mod tests {
         let service = SrtmService::new(temp_dir.path(), 100);
 
         assert_eq!(service.cache_capacity(), 100);
+    }
+
+    #[test]
+    fn test_get_elevation_floor() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // At center, floor and normal should agree
+        let elev = service.get_elevation_floor(35.5, 138.5).unwrap();
+        assert_eq!(elev, Some(500));
+    }
+
+    #[test]
+    fn test_get_elevation_floor_missing_tile() {
+        let temp_dir = TempDir::new().unwrap();
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        let result = service.get_elevation_floor(50.0, 50.0).unwrap();
+        assert_eq!(result, None);
+    }
+
+    #[test]
+    fn test_get_elevations_batch_floor() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        let coords = vec![
+            (35.5, 138.5), // valid tile, center = 500
+            (50.0, 50.0),  // missing tile
+        ];
+        let results = service.get_elevations_batch_floor(&coords, -1);
+
+        assert_eq!(results[0], 500);
+        assert_eq!(results[1], -1); // missing tile → default
     }
 
     #[test]

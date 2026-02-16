@@ -132,8 +132,9 @@ impl SrtmTile {
 
     /// Get the elevation at the specified coordinates using nearest-neighbor lookup.
     ///
-    /// This method returns the elevation of the nearest grid point. For smoother
-    /// results with sub-pixel accuracy, use [`Self::get_elevation_interpolated`].
+    /// This method returns the elevation of the nearest grid point (using `round()`).
+    /// For smoother results with sub-pixel accuracy, use [`Self::get_elevation_interpolated`].
+    /// For srtm.py-compatible floor-based rounding, use [`Self::get_elevation_floor`].
     ///
     /// # Arguments
     ///
@@ -148,6 +149,34 @@ impl SrtmTile {
     ///
     /// Returns an error if the coordinates are outside the tile bounds.
     pub fn get_elevation(&self, lat: f64, lon: f64) -> Result<i16> {
+        self.get_elevation_inner(lat, lon, f64::round)
+    }
+
+    /// Get the elevation at the specified coordinates using floor-based rounding.
+    ///
+    /// This method uses `floor()` instead of `round()` for grid cell selection,
+    /// producing results compatible with srtm.py. The difference is that floor
+    /// always selects the southwest-biased grid cell, while round selects the
+    /// true nearest cell.
+    ///
+    /// # Arguments
+    ///
+    /// * `lat` - Latitude in decimal degrees
+    /// * `lon` - Longitude in decimal degrees
+    ///
+    /// # Returns
+    ///
+    /// The elevation in meters, or [`VOID_VALUE`] (-32768) if no data is available.
+    ///
+    /// # Errors
+    ///
+    /// Returns an error if the coordinates are outside the tile bounds.
+    pub fn get_elevation_floor(&self, lat: f64, lon: f64) -> Result<i16> {
+        self.get_elevation_inner(lat, lon, f64::floor)
+    }
+
+    /// Internal elevation lookup with configurable rounding function.
+    fn get_elevation_inner(&self, lat: f64, lon: f64, rounding_fn: fn(f64) -> f64) -> Result<i16> {
         // Calculate fractional position within tile
         let lat_frac = lat - lat.floor();
         let lon_frac = lon - lon.floor();
@@ -160,8 +189,8 @@ impl SrtmTile {
         // Convert to row/col indices
         // IMPORTANT: Rows are inverted - row 0 is the north edge (top of file)
         // The file stores data from north to south, left to right
-        let row = ((1.0 - lat_frac) * (self.samples - 1) as f64).round() as usize;
-        let col = (lon_frac * (self.samples - 1) as f64).round() as usize;
+        let row = rounding_fn((1.0 - lat_frac) * (self.samples - 1) as f64) as usize;
+        let col = rounding_fn(lon_frac * (self.samples - 1) as f64) as usize;
 
         self.get_elevation_at(row, col)
     }
@@ -499,5 +528,66 @@ mod tests {
 
         let elev = tile.get_elevation_interpolated(lat, lon).unwrap();
         assert!(elev.is_none(), "Expected None for void area");
+    }
+
+    /// Create a test file with distinct values at adjacent cells to test rounding.
+    /// Sets different elevations at (row, col) and (row, col+1) so that
+    /// floor vs round produce different results.
+    fn create_rounding_test_file() -> NamedTempFile {
+        let mut file = NamedTempFile::new().unwrap();
+        let mut data = vec![0u8; SRTM3_SIZE];
+
+        let set_elevation = |data: &mut Vec<u8>, row: usize, col: usize, elev: i16| {
+            let offset = (row * SRTM3_SAMPLES + col) * 2;
+            let bytes = elev.to_be_bytes();
+            data[offset] = bytes[0];
+            data[offset + 1] = bytes[1];
+        };
+
+        // Set row=786, col=1008 = 191 (floor result)
+        // Set row=786, col=1009 = 190 (round result)
+        set_elevation(&mut data, 786, 1008, 191);
+        set_elevation(&mut data, 786, 1009, 190);
+
+        file.write_all(&data).unwrap();
+        file
+    }
+
+    #[test]
+    fn test_floor_vs_round_different_results() {
+        let file = create_rounding_test_file();
+        let tile = SrtmTile::from_file_with_coords(file.path(), 33, -97).unwrap();
+
+        // Coordinate that produces col index ~1008.9851
+        // floor(1008.9851) = 1008, round(1008.9851) = 1009
+        // row index ~786.1869
+        // floor(786.1869) = 786, round(786.1869) = 786
+
+        // lat_frac = 33.3448 - 33.0 = 0.3448
+        // lon_frac = -96.1592 - (-97.0) = 0.8408
+        // row = (1.0 - 0.3448) * 1200 = 786.24
+        // col = 0.8408 * 1200 = 1008.96
+
+        let lat = 33.3448;
+        let lon = -96.1592;
+
+        let elev_round = tile.get_elevation(lat, lon).unwrap();
+        let elev_floor = tile.get_elevation_floor(lat, lon).unwrap();
+
+        assert_eq!(elev_round, 190, "round should select col 1009");
+        assert_eq!(elev_floor, 191, "floor should select col 1008");
+    }
+
+    #[test]
+    fn test_floor_matches_round_at_exact_grid() {
+        let file = create_test_srtm3_file();
+        let tile = SrtmTile::from_file_with_coords(file.path(), 35, 138).unwrap();
+
+        // At the exact center (row 600, col 600), both should agree
+        let elev_round = tile.get_elevation(35.5, 138.5).unwrap();
+        let elev_floor = tile.get_elevation_floor(35.5, 138.5).unwrap();
+
+        assert_eq!(elev_round, elev_floor);
+        assert_eq!(elev_round, 500);
     }
 }

@@ -42,32 +42,46 @@ class SrtmService:
         """
         ...
 
-    def get_elevation(self, lat: float, lon: float) -> Optional[int]:
+    def get_elevation(
+        self, lat: float, lon: float, rounding: str = "nearest"
+    ) -> Optional[int]:
         """Get elevation at the specified coordinates using nearest-neighbor lookup.
 
         Args:
             lat: Latitude in decimal degrees (-60 to 60).
             lon: Longitude in decimal degrees (-180 to 180).
+            rounding: Rounding strategy for grid cell selection.
+                "nearest" (default): Round to closest cell (true nearest-neighbor).
+                "floor": Always round down (srtm.py compatible, southwest-biased).
 
         Returns:
             Elevation in meters, or None if no data available.
 
         Raises:
-            ValueError: If coordinates are out of bounds.
+            ValueError: If coordinates are out of bounds or rounding is invalid.
         """
         ...
 
     def get_elevations_batch(
-        self, coords: List[Tuple[float, float]], default: int = 0
+        self,
+        coords: List[Tuple[float, float]],
+        default: int = 0,
+        rounding: str = "nearest",
     ) -> List[int]:
         """Get elevations for a batch of coordinates.
 
         Args:
             coords: List of (lat, lon) tuples.
             default: Default value for void/missing data.
+            rounding: Rounding strategy for grid cell selection.
+                "nearest" (default): Round to closest cell (true nearest-neighbor).
+                "floor": Always round down (srtm.py compatible, southwest-biased).
 
         Returns:
             List of elevation values in meters.
+
+        Raises:
+            ValueError: If rounding is invalid.
         """
         ...
 
