@@ -253,6 +253,39 @@ impl SrtmService {
             .collect()
     }
 
+    /// Get interpolated elevations for a batch of coordinates.
+    ///
+    /// Returns a vector of interpolated elevation values, one per input coordinate.
+    /// Uses bilinear interpolation for sub-pixel accuracy.
+    /// Uses `default` for void data, missing tiles, or errors.
+    ///
+    /// # Arguments
+    ///
+    /// * `coords` - Slice of (latitude, longitude) pairs
+    /// * `default` - Default value for void/missing/error results
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// let coords = vec![(35.3606, 138.7274), (27.9881, 86.9250)];
+    /// let elevations = service.get_elevations_batch_interpolated(&coords, 0.0);
+    /// ```
+    pub fn get_elevations_batch_interpolated(
+        &self,
+        coords: &[(f64, f64)],
+        default: f64,
+    ) -> Vec<f64> {
+        coords
+            .iter()
+            .map(|&(lat, lon)| {
+                self.get_elevation_interpolated(lat, lon)
+                    .ok()
+                    .flatten()
+                    .unwrap_or(default)
+            })
+            .collect()
+    }
+
     /// Validate coordinates and load the appropriate tile.
     fn load_tile_for_coords(&self, lat: f64, lon: f64) -> Result<Arc<SrtmTile>> {
         // Validate coordinates
@@ -763,6 +796,24 @@ mod tests {
         assert_eq!(results[1], -1); // missing tile → default
                                     // Third result is 0 (zero-filled tile data), which is a valid value
         assert_eq!(results[2], 0);
+    }
+
+    #[test]
+    fn test_get_elevations_batch_interpolated() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        let coords = vec![
+            (35.5, 138.5), // valid tile, center = 500.0
+            (50.0, 50.0),  // missing tile
+        ];
+        let results = service.get_elevations_batch_interpolated(&coords, -1.0);
+
+        assert_eq!(results.len(), 2);
+        assert!((results[0] - 500.0).abs() < 1.0); // interpolated, close to 500
+        assert_eq!(results[1], -1.0); // missing tile → default
     }
 
     #[test]

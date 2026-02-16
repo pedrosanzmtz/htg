@@ -108,6 +108,22 @@ impl SrtmService {
         self.inner.get_elevations_batch(&coords, default)
     }
 
+    /// Get interpolated elevations for a batch of coordinates.
+    ///
+    /// Uses bilinear interpolation for sub-pixel accuracy.
+    ///
+    /// Args:
+    ///     coords: List of (lat, lon) tuples.
+    ///     default: Default value for void/missing data (default: 0.0).
+    ///
+    /// Returns:
+    ///     List of interpolated elevation values in meters.
+    #[pyo3(signature = (coords, default=0.0))]
+    fn get_elevations_batch_interpolated(&self, coords: Vec<(f64, f64)>, default: f64) -> Vec<f64> {
+        self.inner
+            .get_elevations_batch_interpolated(&coords, default)
+    }
+
     /// Get elevation at the specified coordinates using bilinear interpolation.
     ///
     /// This provides smoother results with sub-pixel accuracy.

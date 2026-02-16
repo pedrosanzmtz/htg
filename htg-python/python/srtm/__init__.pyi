@@ -71,6 +71,22 @@ class SrtmService:
         """
         ...
 
+    def get_elevations_batch_interpolated(
+        self, coords: List[Tuple[float, float]], default: float = 0.0
+    ) -> List[float]:
+        """Get interpolated elevations for a batch of coordinates.
+
+        Uses bilinear interpolation for sub-pixel accuracy.
+
+        Args:
+            coords: List of (lat, lon) tuples.
+            default: Default value for void/missing data.
+
+        Returns:
+            List of interpolated elevation values in meters.
+        """
+        ...
+
     def get_elevation_interpolated(self, lat: float, lon: float) -> Optional[float]:
         """Get elevation using bilinear interpolation.
 
