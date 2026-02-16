@@ -2,6 +2,7 @@
 # This file just ensures the package is recognized and provides type hints
 from srtm.srtm import (  # type: ignore[import]
     CacheStats as CacheStats,
+    PreloadStats as PreloadStats,
     SrtmService as SrtmService,
     VOID_VALUE as VOID_VALUE,
     __version__ as __version__,
@@ -12,6 +13,7 @@ from srtm.srtm import (  # type: ignore[import]
 __all__ = [
     "SrtmService",
     "CacheStats",
+    "PreloadStats",
     "lat_lon_to_filename",
     "filename_to_lat_lon",
     "__version__",
