@@ -12,6 +12,42 @@
 //!
 //! The filename represents the **southwest corner** of the 1° × 1° tile.
 
+/// Convert integer tile coordinates to an SRTM `.hgt` filename.
+///
+/// This is the core formatting function used internally. It takes the
+/// already-floored integer coordinates and produces the filename string.
+///
+/// # Arguments
+///
+/// * `lat_int` - Floored latitude (e.g., 35 for lat 35.5, -13 for lat -12.3)
+/// * `lon_int` - Floored longitude (e.g., 138 for lon 138.7, -78 for lon -77.1)
+///
+/// # Returns
+///
+/// The filename (e.g., "N35E138.hgt")
+///
+/// # Examples
+///
+/// ```
+/// use htg::filename::coords_to_filename;
+///
+/// assert_eq!(coords_to_filename(35, 138), "N35E138.hgt");
+/// assert_eq!(coords_to_filename(-13, -78), "S13W078.hgt");
+/// assert_eq!(coords_to_filename(0, -1), "N00W001.hgt");
+/// ```
+pub fn coords_to_filename(lat_int: i32, lon_int: i32) -> String {
+    let lat_prefix = if lat_int >= 0 { 'N' } else { 'S' };
+    let lon_prefix = if lon_int >= 0 { 'E' } else { 'W' };
+
+    format!(
+        "{}{:02}{}{:03}.hgt",
+        lat_prefix,
+        lat_int.abs(),
+        lon_prefix,
+        lon_int.abs()
+    )
+}
+
 /// Convert latitude and longitude to an SRTM `.hgt` filename.
 ///
 /// # Arguments
@@ -33,19 +69,7 @@
 /// assert_eq!(lat_lon_to_filename(0.5, -0.5), "N00W001.hgt");
 /// ```
 pub fn lat_lon_to_filename(lat: f64, lon: f64) -> String {
-    let lat_int = lat.floor() as i32;
-    let lon_int = lon.floor() as i32;
-
-    let lat_prefix = if lat_int >= 0 { 'N' } else { 'S' };
-    let lon_prefix = if lon_int >= 0 { 'E' } else { 'W' };
-
-    format!(
-        "{}{:02}{}{:03}.hgt",
-        lat_prefix,
-        lat_int.abs(),
-        lon_prefix,
-        lon_int.abs()
-    )
+    coords_to_filename(lat.floor() as i32, lon.floor() as i32)
 }
 
 /// Parse an SRTM filename to extract the base coordinates.
@@ -126,6 +150,15 @@ pub fn is_valid_srtm_coord(lat: f64, lon: f64) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn test_coords_to_filename() {
+        assert_eq!(coords_to_filename(35, 138), "N35E138.hgt");
+        assert_eq!(coords_to_filename(-13, -78), "S13W078.hgt");
+        assert_eq!(coords_to_filename(0, 0), "N00E000.hgt");
+        assert_eq!(coords_to_filename(0, -1), "N00W001.hgt");
+        assert_eq!(coords_to_filename(-60, -180), "S60W180.hgt");
+    }
 
     #[test]
     fn test_positive_coords() {
