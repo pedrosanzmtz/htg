@@ -403,6 +403,9 @@ impl SrtmService {
     ///
     /// Groups coordinates by tile key, loads each unique tile once, applies
     /// the elevation function, and reassembles results in original input order.
+    ///
+    /// Includes a fast path: if all valid coordinates fall within a single tile,
+    /// the HashMap allocation is skipped entirely.
     fn batch_with_tile_grouping<T: Copy>(
         &self,
         coords: &[(f64, f64)],
@@ -411,7 +414,43 @@ impl SrtmService {
     ) -> Vec<T> {
         let mut results = vec![default; coords.len()];
 
-        // Group coordinate indices by tile key
+        // Fast path: check if all valid coords share the same tile key.
+        // This avoids HashMap allocation for the common case (e.g., route segments).
+        let mut common_key: Option<(i32, i32)> = None;
+        let mut all_same_tile = true;
+
+        for &(lat, lon) in coords {
+            if !(-60.0..=60.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+                continue;
+            }
+            let key = (lat.floor() as i32, lon.floor() as i32);
+            match common_key {
+                None => common_key = Some(key),
+                Some(k) if k == key => {}
+                _ => {
+                    all_same_tile = false;
+                    break;
+                }
+            }
+        }
+
+        if all_same_tile {
+            if let Some(key) = common_key {
+                if let Ok(tile) = self.load_tile(key) {
+                    for (i, &(lat, lon)) in coords.iter().enumerate() {
+                        if !(-60.0..=60.0).contains(&lat) || !(-180.0..=180.0).contains(&lon) {
+                            continue;
+                        }
+                        if let Some(v) = elevation_fn(&tile, lat, lon) {
+                            results[i] = v;
+                        }
+                    }
+                }
+            }
+            return results;
+        }
+
+        // Multi-tile path: group coordinate indices by tile key
         let mut groups: HashMap<(i32, i32), Vec<usize>> = HashMap::new();
         for (i, &(lat, lon)) in coords.iter().enumerate() {
             // Out-of-bounds coords get the default (skip grouping)

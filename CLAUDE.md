@@ -10,7 +10,7 @@ Building a high-performance, memory-efficient microservice to return elevation d
 ## Current Status
 
 **Phase:** All core phases complete (1-5)
-**Latest Features:** Safe Option-based elevation API (v0.3.0), batch query API, .hgt.zip support, bilinear interpolation, GeoJSON batch queries, auto-download, ArduPilot source support, preload API with bounding box filtering
+**Latest Features:** Safe Option-based elevation API (v0.3.0), batch query API, .hgt.zip support, bilinear interpolation, GeoJSON batch queries, auto-download, ArduPilot source support, preload API with bounding box filtering, performance optimizations (madvise, unsafe get_elevation_at, single-tile batch fast path, fat LTO, Python GIL release), Criterion benchmarks
 
 ### Open Issues
 - #6: Publish htg library to crates.io
@@ -47,6 +47,8 @@ Building a high-performance, memory-efficient microservice to return elevation d
 10. **Batch Query API:** `get_elevations_batch()` for efficient multi-coordinate queries
 11. **ZIP Support:** Transparent extraction of local `.hgt.zip` files
 12. **Preload API:** `preload()` method to warm the LRU cache at startup with optional bounding box filtering
+13. **Performance Optimizations:** madvise(Random), unsafe get_elevation_at, single-tile batch fast path, fat LTO, Python GIL release
+14. **Criterion Benchmarks:** Micro-benchmarks for single-point and batch queries
 
 ### Reference Implementation
 The Go library `asmyasnikov/srtm` was used as algorithm reference:
@@ -92,6 +94,13 @@ Return Option<elevation> (None for void/missing)
 - `geojson` - GeoJSON parsing for batch queries
 - `tower` / `tower-http` - Middleware (CORS, tracing)
 - `tracing` / `tracing-subscriber` - Structured logging
+
+### Dev Dependencies (htg library)
+- `tempfile` - Temporary files for tests
+- `criterion` - Micro-benchmarks (`htg/benches/elevation.rs`)
+
+### Build Profile
+- Release profile: `lto = "fat"`, `codegen-units = 1`, `opt-level = 3` (workspace-level)
 
 ### CLI Dependencies (htg-cli)
 - `clap` - Command-line argument parsing
@@ -360,6 +369,15 @@ cargo test -- --nocapture
 # Specific crate
 cargo test -p htg
 cargo test -p htg-service
+```
+
+### Running Benchmarks
+```bash
+# All benchmarks
+cargo bench -p htg
+
+# Specific benchmark
+cargo bench -p htg -- single_nearest
 ```
 
 ### Test Coverage
