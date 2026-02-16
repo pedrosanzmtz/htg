@@ -13,6 +13,7 @@ High-performance, memory-efficient Rust library for querying elevation data from
 - **Offline**: Works with local `.hgt` files
 - **Auto-Download**: Optional automatic tile download (enable `download` feature)
 - **Bilinear Interpolation**: Sub-pixel accuracy for smooth elevation profiles
+- **Floor Rounding Mode**: srtm.py-compatible grid cell selection
 
 ## Installation
 
@@ -40,6 +41,9 @@ println!("Elevation: {}m", elevation);
 if let Some(elevation) = service.get_elevation_interpolated(35.6762, 139.6503)? {
     println!("Interpolated: {:.1}m", elevation);
 }
+
+// Floor-based rounding (srtm.py compatible)
+let elevation = service.get_elevation_floor(35.6762, 139.6503)?;
 ```
 
 ## Auto-Download
