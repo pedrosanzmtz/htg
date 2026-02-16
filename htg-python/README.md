@@ -79,6 +79,29 @@ elevations = service.get_elevations_batch(coords, default=0)
 print(elevations)  # [3776, 8752, 3148]
 ```
 
+## Preloading Tiles
+
+Warm the cache at startup to avoid cold-start latency (useful when tiles are on NFS):
+
+```python
+import srtm
+
+service = srtm.SrtmService("/path/to/srtm", cache_size=100)
+
+# Preload all tiles
+stats = service.preload()
+print(f"Loaded {stats.tiles_loaded} tiles in {stats.elapsed_ms}ms")
+
+# Preload only CONUS + Hawaii tiles
+stats = service.preload(bounds=[
+    (24.0, -125.0, 50.0, -66.0),   # CONUS
+    (19.0, -161.0, 22.0, -154.0),  # Hawaii
+])
+
+# Non-blocking preload (runs in background thread)
+service.preload(blocking=False)
+```
+
 ## Utility Functions
 
 ```python

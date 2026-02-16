@@ -22,6 +22,24 @@ class CacheStats:
         """Cache hit rate (0.0 to 1.0)."""
         ...
 
+class PreloadStats:
+    """Statistics from a preload operation."""
+
+    tiles_loaded: int
+    """Number of tiles successfully loaded into cache."""
+
+    tiles_already_cached: int
+    """Number of tiles that were already in cache."""
+
+    tiles_failed: int
+    """Number of tiles that failed to load."""
+
+    tiles_matched: int
+    """Number of tiles that matched the bounding box filter."""
+
+    elapsed_ms: int
+    """Total elapsed time in milliseconds."""
+
 class SrtmService:
     """SRTM elevation service with LRU caching.
 
@@ -113,6 +131,27 @@ class SrtmService:
 
         Raises:
             ValueError: If coordinates are out of bounds or tile is not found.
+        """
+        ...
+
+    def preload(
+        self,
+        bounds: Optional[List[Tuple[float, float, float, float]]] = None,
+        blocking: bool = True,
+    ) -> Optional[PreloadStats]:
+        """Preload tiles into the LRU cache.
+
+        Scans the data directory for .hgt and .hgt.zip files and loads them
+        into cache. Useful for warming the cache at startup.
+
+        Args:
+            bounds: Optional list of bounding boxes as (min_lat, min_lon, max_lat, max_lon) tuples.
+                If provided, only tiles overlapping at least one box are loaded.
+            blocking: If True (default), blocks until preload completes and returns stats.
+                If False, runs preload in a background thread and returns None immediately.
+
+        Returns:
+            PreloadStats if blocking=True, None if blocking=False.
         """
         ...
 

@@ -10,7 +10,7 @@ Building a high-performance, memory-efficient microservice to return elevation d
 ## Current Status
 
 **Phase:** All core phases complete (1-5)
-**Latest Features:** Safe Option-based elevation API (v0.3.0), batch query API, .hgt.zip support, bilinear interpolation, GeoJSON batch queries, auto-download, ArduPilot source support
+**Latest Features:** Safe Option-based elevation API (v0.3.0), batch query API, .hgt.zip support, bilinear interpolation, GeoJSON batch queries, auto-download, ArduPilot source support, preload API with bounding box filtering
 
 ### Open Issues
 - #6: Publish htg library to crates.io
@@ -46,6 +46,7 @@ Building a high-performance, memory-efficient microservice to return elevation d
 9. **Safe Option API:** Service-level methods return `Option` for void/missing data (v0.3.0)
 10. **Batch Query API:** `get_elevations_batch()` for efficient multi-coordinate queries
 11. **ZIP Support:** Transparent extraction of local `.hgt.zip` files
+12. **Preload API:** `preload()` method to warm the LRU cache at startup with optional bounding box filtering
 
 ### Reference Implementation
 The Go library `asmyasnikov/srtm` was used as algorithm reference:
@@ -214,6 +215,7 @@ curl "http://localhost:8080/stats"
 | `HTG_DOWNLOAD_SOURCE` | Named source: "ardupilot", "ardupilot-srtm1", "ardupilot-srtm3" | None |
 | `HTG_DOWNLOAD_URL` | URL template for auto-download (use `{filename}`, `{continent}` placeholders) | None |
 | `HTG_DOWNLOAD_GZIP` | Whether downloads are gzipped | false |
+| `HTG_PRELOAD` | Preload tiles at startup: "true"/"all"/"1" for all, or bounding boxes (e.g., "24.0,-125.0,50.0,-66.0") | None |
 | `RUST_LOG` | Log level (e.g., "info", "debug", "htg_service=debug") | "info" |
 
 ## Development Phases

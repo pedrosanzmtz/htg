@@ -14,6 +14,7 @@ High-performance, memory-efficient Rust library for querying elevation data from
 - **Auto-Download**: Optional automatic tile download (enable `download` feature)
 - **Bilinear Interpolation**: Sub-pixel accuracy for smooth elevation profiles
 - **Floor Rounding Mode**: srtm.py-compatible grid cell selection
+- **Preload API**: Warm the cache at startup with optional bounding box filtering
 
 ## Installation
 
@@ -44,6 +45,15 @@ if let Some(elevation) = service.get_elevation_interpolated(35.6762, 139.6503)? 
 
 // Floor-based rounding (srtm.py compatible)
 let elevation = service.get_elevation_floor(35.6762, 139.6503)?;
+
+// Preload tiles into cache (avoids cold-start latency on NFS)
+let stats = service.preload(None); // all tiles
+println!("Loaded {} tiles in {}ms", stats.tiles_loaded, stats.elapsed_ms);
+
+// Preload with bounding box filter
+use htg::BoundingBox;
+let conus = BoundingBox::new(24.0, -125.0, 50.0, -66.0);
+let stats = service.preload(Some(&[conus]));
 ```
 
 ## Auto-Download

@@ -26,7 +26,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 
 use axum::{routing::get, Router};
-use htg::SrtmServiceBuilder;
+use htg::{BoundingBox, SrtmServiceBuilder};
 use htg_service::{handlers, AppState};
 use tower_http::{
     cors::{Any, CorsLayer},
@@ -106,6 +106,25 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
         "Starting HTG service"
     );
 
+    // Handle HTG_PRELOAD environment variable
+    if let Ok(preload_val) = std::env::var("HTG_PRELOAD") {
+        let bounds = parse_preload_bounds(&preload_val);
+        let bounds_ref = bounds.as_deref();
+        tracing::info!(
+            bounds = ?bounds_ref.map(|b| b.len()),
+            "Preloading tiles into cache"
+        );
+        let stats = srtm_service.preload(bounds_ref);
+        tracing::info!(
+            tiles_loaded = stats.tiles_loaded,
+            tiles_already_cached = stats.tiles_already_cached,
+            tiles_failed = stats.tiles_failed,
+            tiles_matched = stats.tiles_matched,
+            elapsed_ms = stats.elapsed_ms,
+            "Preload complete"
+        );
+    }
+
     let state = Arc::new(AppState { srtm_service });
 
     // Build router
@@ -135,4 +154,51 @@ async fn main() -> Result<(), Box<dyn std::error::Error>> {
     axum::serve(listener, app).await?;
 
     Ok(())
+}
+
+/// Parse the `HTG_PRELOAD` environment variable value into bounding boxes.
+///
+/// Supported formats:
+/// - `true`, `all`, `1` — preload all tiles (returns `None`)
+/// - `min_lat,min_lon,max_lat,max_lon` — single bounding box
+/// - `min_lat,min_lon,max_lat,max_lon;min_lat,min_lon,max_lat,max_lon` — multiple bounding boxes
+fn parse_preload_bounds(value: &str) -> Option<Vec<BoundingBox>> {
+    let trimmed = value.trim();
+
+    // Check for "all tiles" keywords
+    match trimmed.to_lowercase().as_str() {
+        "true" | "all" | "1" => return None,
+        _ => {}
+    }
+
+    // Parse as bounding boxes separated by ';'
+    let boxes: Vec<BoundingBox> = trimmed
+        .split(';')
+        .filter_map(|bbox_str| {
+            let parts: Vec<f64> = bbox_str
+                .split(',')
+                .filter_map(|s| s.trim().parse::<f64>().ok())
+                .collect();
+            if parts.len() == 4 {
+                Some(BoundingBox::new(parts[0], parts[1], parts[2], parts[3]))
+            } else {
+                tracing::warn!(
+                    bbox = bbox_str,
+                    "Invalid bounding box format, expected min_lat,min_lon,max_lat,max_lon"
+                );
+                None
+            }
+        })
+        .collect();
+
+    if boxes.is_empty() {
+        // If parsing failed entirely, fall back to loading all tiles
+        tracing::warn!(
+            value = trimmed,
+            "Could not parse HTG_PRELOAD value, preloading all tiles"
+        );
+        None
+    } else {
+        Some(boxes)
+    }
 }

@@ -21,6 +21,7 @@ Existing elevation services (e.g., Python/Flask) consume excessive memory (7GB+)
 - **LRU Caching**: Configurable cache size to bound memory usage
 - **Safe API**: Service-level methods return `Option` for void/missing data
 - **Batch Queries**: `get_elevations_batch()` for efficient multi-coordinate lookups
+- **Preload API**: Warm the cache at startup with optional bounding box filtering
 - **Python Bindings**: Native Python package via PyO3 (Python 3.12+)
 - **Docker Ready**: Easy deployment with Docker/Docker Compose
 - **OpenAPI Docs**: Interactive Swagger UI at `/docs`
@@ -176,6 +177,7 @@ The OpenAPI JSON spec is available at `/api-docs/openapi.json`.
 | `HTG_DOWNLOAD_SOURCE` | - | Named source: "ardupilot", "ardupilot-srtm1", "ardupilot-srtm3" |
 | `HTG_DOWNLOAD_URL` | - | URL template for auto-download (optional) |
 | `HTG_DOWNLOAD_GZIP` | `false` | Whether downloaded files are gzipped |
+| `HTG_PRELOAD` | - | Preload tiles at startup: `true`/`all`/`1` for all, or bounding boxes |
 | `RUST_LOG` | `info` | Log level (debug, info, warn, error) |
 
 ### Auto-Download Configuration
@@ -267,6 +269,25 @@ let service = SrtmServiceBuilder::new("/data/srtm")
 
 // Will download N35E139.hgt if not present locally
 let elevation = service.get_elevation(35.6762, 139.6503)?; // Option<i16>
+```
+
+### Preloading Tiles
+
+Warm the LRU cache at startup to avoid cold-start latency (useful when tiles are on NFS or slow storage):
+
+```rust
+use htg::{SrtmService, BoundingBox};
+
+let service = SrtmService::new("/data/srtm", 100);
+
+// Preload all tiles
+let stats = service.preload(None);
+println!("Loaded {} tiles in {}ms", stats.tiles_loaded, stats.elapsed_ms);
+
+// Preload only CONUS + Hawaii tiles
+let conus = BoundingBox::new(24.0, -125.0, 50.0, -66.0);
+let hawaii = BoundingBox::new(19.0, -161.0, 22.0, -154.0);
+let stats = service.preload(Some(&[conus, hawaii]));
 ```
 
 ### From Environment Variables
@@ -404,6 +425,10 @@ elevations = service.get_elevations_batch(coords, default=0)
 
 # Floor-based rounding (srtm.py compatible, for migration)
 elevation = service.get_elevation(35.3606, 138.7274, rounding="floor")
+
+# Preload tiles into cache (avoids cold-start latency on NFS)
+stats = service.preload()  # all tiles
+stats = service.preload(bounds=[(24.0, -125.0, 50.0, -66.0)])  # CONUS only
 ```
 
 ## SRTM Data

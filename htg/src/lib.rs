@@ -104,5 +104,5 @@ pub mod tile;
 
 // Re-export main types at crate root for convenience
 pub use error::{Result, SrtmError};
-pub use service::{CacheStats, SrtmService, SrtmServiceBuilder};
+pub use service::{BoundingBox, CacheStats, PreloadStats, SrtmService, SrtmServiceBuilder};
 pub use tile::{SrtmResolution, SrtmTile, VOID_VALUE};

@@ -2,6 +2,8 @@
 
 #![allow(clippy::useless_conversion)]
 
+use std::sync::Arc;
+
 use pyo3::exceptions::PyValueError;
 use pyo3::prelude::*;
 
@@ -47,6 +49,41 @@ impl CacheStats {
     }
 }
 
+/// Statistics from a preload operation.
+#[pyclass]
+#[derive(Clone)]
+struct PreloadStats {
+    /// Number of tiles successfully loaded into cache.
+    #[pyo3(get)]
+    tiles_loaded: u64,
+    /// Number of tiles that were already in cache.
+    #[pyo3(get)]
+    tiles_already_cached: u64,
+    /// Number of tiles that failed to load.
+    #[pyo3(get)]
+    tiles_failed: u64,
+    /// Number of tiles that matched the bounding box filter.
+    #[pyo3(get)]
+    tiles_matched: u64,
+    /// Total elapsed time in milliseconds.
+    #[pyo3(get)]
+    elapsed_ms: u64,
+}
+
+#[pymethods]
+impl PreloadStats {
+    fn __repr__(&self) -> String {
+        format!(
+            "PreloadStats(loaded={}, cached={}, failed={}, matched={}, elapsed={}ms)",
+            self.tiles_loaded,
+            self.tiles_already_cached,
+            self.tiles_failed,
+            self.tiles_matched,
+            self.elapsed_ms
+        )
+    }
+}
+
 /// SRTM elevation service with LRU caching.
 ///
 /// This is the main interface for querying elevation data from SRTM .hgt files.
@@ -57,7 +94,7 @@ impl CacheStats {
 ///     >>> print(f"Elevation: {elevation}m")
 #[pyclass]
 struct SrtmService {
-    inner: htg_lib::SrtmService,
+    inner: Arc<htg_lib::SrtmService>,
 }
 
 #[pymethods]
@@ -74,7 +111,7 @@ impl SrtmService {
     #[pyo3(signature = (data_dir, cache_size=100))]
     fn new(data_dir: &str, cache_size: u64) -> Self {
         SrtmService {
-            inner: htg_lib::SrtmService::new(data_dir, cache_size),
+            inner: Arc::new(htg_lib::SrtmService::new(data_dir, cache_size)),
         }
     }
 
@@ -176,6 +213,62 @@ impl SrtmService {
             .map_err(|e| PyValueError::new_err(e.to_string()))
     }
 
+    /// Preload tiles into the LRU cache.
+    ///
+    /// Scans the data directory for .hgt and .hgt.zip files and loads them
+    /// into cache. Useful for warming the cache at startup.
+    ///
+    /// Args:
+    ///     bounds: Optional list of bounding boxes as (min_lat, min_lon, max_lat, max_lon) tuples.
+    ///         If provided, only tiles overlapping at least one box are loaded.
+    ///     blocking: If True (default), blocks until preload completes and returns stats.
+    ///         If False, runs preload in a background thread and returns None immediately.
+    ///
+    /// Returns:
+    ///     PreloadStats if blocking=True, None if blocking=False.
+    ///
+    /// Example:
+    ///     >>> stats = service.preload()
+    ///     >>> print(f"Loaded {stats.tiles_loaded} tiles in {stats.elapsed_ms}ms")
+    ///
+    ///     >>> # Preload only CONUS tiles
+    ///     >>> stats = service.preload(bounds=[(24.0, -125.0, 50.0, -66.0)])
+    ///
+    ///     >>> # Non-blocking preload
+    ///     >>> service.preload(blocking=False)
+    #[pyo3(signature = (bounds=None, blocking=true))]
+    fn preload(
+        &self,
+        py: Python<'_>,
+        bounds: Option<Vec<(f64, f64, f64, f64)>>,
+        blocking: bool,
+    ) -> Option<PreloadStats> {
+        let boxes: Option<Vec<htg_lib::BoundingBox>> = bounds.map(|b| {
+            b.into_iter()
+                .map(|(min_lat, min_lon, max_lat, max_lon)| {
+                    htg_lib::BoundingBox::new(min_lat, min_lon, max_lat, max_lon)
+                })
+                .collect()
+        });
+
+        if blocking {
+            let stats = py.allow_threads(|| self.inner.preload(boxes.as_deref()));
+            Some(PreloadStats {
+                tiles_loaded: stats.tiles_loaded,
+                tiles_already_cached: stats.tiles_already_cached,
+                tiles_failed: stats.tiles_failed,
+                tiles_matched: stats.tiles_matched,
+                elapsed_ms: stats.elapsed_ms,
+            })
+        } else {
+            let inner = Arc::clone(&self.inner);
+            std::thread::spawn(move || {
+                inner.preload(boxes.as_deref());
+            });
+            None
+        }
+    }
+
     /// Get current cache statistics.
     ///
     /// Returns:
@@ -247,6 +340,7 @@ fn filename_to_lat_lon(filename: &str) -> Option<(i32, i32)> {
 fn srtm(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SrtmService>()?;
     m.add_class::<CacheStats>()?;
+    m.add_class::<PreloadStats>()?;
     m.add_function(wrap_pyfunction!(lat_lon_to_filename, m)?)?;
     m.add_function(wrap_pyfunction!(filename_to_lat_lon, m)?)?;
     m.add("__version__", env!("CARGO_PKG_VERSION"))?;

@@ -22,9 +22,11 @@
 //! let elevation = service.get_elevation(35.5, 138.5)?;
 //! ```
 
+use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use std::time::Instant;
 
 use moka::sync::Cache;
 
@@ -58,6 +60,69 @@ impl CacheStats {
             self.hit_count as f64 / total as f64
         }
     }
+}
+
+/// A geographic bounding box for filtering tiles during preload.
+///
+/// Coordinates are in decimal degrees (WGS84).
+#[derive(Debug, Clone, Copy)]
+pub struct BoundingBox {
+    /// Minimum latitude (southern boundary).
+    pub min_lat: f64,
+    /// Minimum longitude (western boundary).
+    pub min_lon: f64,
+    /// Maximum latitude (northern boundary).
+    pub max_lat: f64,
+    /// Maximum longitude (eastern boundary).
+    pub max_lon: f64,
+}
+
+impl BoundingBox {
+    /// Create a new bounding box.
+    ///
+    /// # Arguments
+    ///
+    /// * `min_lat` - Southern boundary latitude
+    /// * `min_lon` - Western boundary longitude
+    /// * `max_lat` - Northern boundary latitude
+    /// * `max_lon` - Eastern boundary longitude
+    pub fn new(min_lat: f64, min_lon: f64, max_lat: f64, max_lon: f64) -> Self {
+        Self {
+            min_lat,
+            min_lon,
+            max_lat,
+            max_lon,
+        }
+    }
+
+    /// Check if this bounding box overlaps with a 1°×1° tile.
+    ///
+    /// A tile at `(tile_lat, tile_lon)` covers the area
+    /// `[tile_lat, tile_lat+1) × [tile_lon, tile_lon+1)`.
+    pub fn overlaps_tile(&self, tile_lat: i32, tile_lon: i32) -> bool {
+        let tile_max_lat = tile_lat + 1;
+        let tile_max_lon = tile_lon + 1;
+
+        self.min_lat < tile_max_lat as f64
+            && self.max_lat > tile_lat as f64
+            && self.min_lon < tile_max_lon as f64
+            && self.max_lon > tile_lon as f64
+    }
+}
+
+/// Statistics from a preload operation.
+#[derive(Debug, Clone, Default)]
+pub struct PreloadStats {
+    /// Number of tiles successfully loaded into cache.
+    pub tiles_loaded: u64,
+    /// Number of tiles that were already in cache.
+    pub tiles_already_cached: u64,
+    /// Number of tiles that failed to load.
+    pub tiles_failed: u64,
+    /// Number of tiles that matched the bounding box filter.
+    pub tiles_matched: u64,
+    /// Total elapsed time in milliseconds.
+    pub elapsed_ms: u64,
 }
 
 /// High-level SRTM elevation service with automatic tile caching.
@@ -474,6 +539,111 @@ impl SrtmService {
     /// Clear all tiles from the cache.
     pub fn clear_cache(&self) {
         self.tile_cache.invalidate_all();
+    }
+
+    /// Scan the data directory for `.hgt` and `.hgt.zip` files.
+    ///
+    /// Returns a sorted, deduplicated list of tile filenames (e.g., `["N35E138.hgt"]`).
+    /// Both `.hgt` and `.hgt.zip` files are discovered; duplicates are merged
+    /// (if both `N35E138.hgt` and `N35E138.hgt.zip` exist, only `N35E138.hgt` appears once).
+    pub fn scan_tile_files(&self) -> Vec<String> {
+        let mut filenames = HashSet::new();
+
+        let entries = match std::fs::read_dir(&self.data_dir) {
+            Ok(entries) => entries,
+            Err(_) => return Vec::new(),
+        };
+
+        for entry in entries.flatten() {
+            let name = entry.file_name();
+            let name = name.to_string_lossy();
+
+            if name.ends_with(".hgt.zip") {
+                // Strip .zip suffix to get the canonical .hgt name
+                let hgt_name = name.strip_suffix(".zip").unwrap();
+                filenames.insert(hgt_name.to_string());
+            } else if name.ends_with(".hgt") {
+                filenames.insert(name.to_string());
+            }
+        }
+
+        let mut result: Vec<String> = filenames.into_iter().collect();
+        result.sort();
+        result
+    }
+
+    /// Preload tiles into the LRU cache.
+    ///
+    /// Scans the data directory for `.hgt` and `.hgt.zip` files and loads them
+    /// into the cache. Optionally filters tiles by one or more bounding boxes.
+    ///
+    /// This is useful for warming the cache at startup to avoid cold-start latency
+    /// when tiles are stored on high-latency storage (e.g., NFS).
+    ///
+    /// # Arguments
+    ///
+    /// * `bounds` - Optional slice of bounding boxes to filter tiles. If `None`,
+    ///   all discovered tiles are loaded. If `Some`, only tiles that overlap with
+    ///   at least one bounding box are loaded.
+    ///
+    /// # Returns
+    ///
+    /// Statistics about the preload operation.
+    ///
+    /// # Example
+    ///
+    /// ```ignore
+    /// use htg::{SrtmService, BoundingBox};
+    ///
+    /// let service = SrtmService::new("/data/srtm", 100);
+    ///
+    /// // Preload all tiles
+    /// let stats = service.preload(None);
+    /// println!("Loaded {} tiles in {}ms", stats.tiles_loaded, stats.elapsed_ms);
+    ///
+    /// // Preload only CONUS tiles
+    /// let conus = BoundingBox::new(24.0, -125.0, 50.0, -66.0);
+    /// let stats = service.preload(Some(&[conus]));
+    /// ```
+    pub fn preload(&self, bounds: Option<&[BoundingBox]>) -> PreloadStats {
+        let start = Instant::now();
+        let mut stats = PreloadStats::default();
+
+        let filenames = self.scan_tile_files();
+
+        for filename in &filenames {
+            // Parse coordinates from filename to check bounding box
+            let coords = crate::filename::filename_to_lat_lon(filename);
+
+            // Filter by bounding boxes if provided
+            if let Some(boxes) = bounds {
+                if let Some((tile_lat, tile_lon)) = coords {
+                    if !boxes.iter().any(|b| b.overlaps_tile(tile_lat, tile_lon)) {
+                        continue;
+                    }
+                } else {
+                    // Can't parse coordinates, skip
+                    continue;
+                }
+            }
+
+            stats.tiles_matched += 1;
+
+            // Check if already in cache
+            if self.tile_cache.get(filename).is_some() {
+                stats.tiles_already_cached += 1;
+                continue;
+            }
+
+            // Load the tile
+            match self.load_tile(filename) {
+                Ok(_) => stats.tiles_loaded += 1,
+                Err(_) => stats.tiles_failed += 1,
+            }
+        }
+
+        stats.elapsed_ms = start.elapsed().as_millis() as u64;
+        stats
     }
 }
 
@@ -1037,5 +1207,200 @@ mod tests {
             Some(v) => std::env::set_var("HTG_CACHE_SIZE", v),
             None => std::env::remove_var("HTG_CACHE_SIZE"),
         }
+    }
+
+    // --- Preload tests ---
+
+    #[test]
+    fn test_preload_all_tiles() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+        create_test_tile(temp_dir.path(), "N36E139.hgt", 1000);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+        let stats = service.preload(None);
+
+        assert_eq!(stats.tiles_matched, 2);
+        assert_eq!(stats.tiles_loaded, 2);
+        assert_eq!(stats.tiles_already_cached, 0);
+        assert_eq!(stats.tiles_failed, 0);
+    }
+
+    #[test]
+    fn test_preload_with_bounding_box() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+        create_test_tile(temp_dir.path(), "N50E010.hgt", 1000);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // Bounding box that only covers Japan area (N35E138)
+        let bbox = BoundingBox::new(34.0, 137.0, 37.0, 140.0);
+        let stats = service.preload(Some(&[bbox]));
+
+        assert_eq!(stats.tiles_matched, 1);
+        assert_eq!(stats.tiles_loaded, 1);
+
+        // Verify the right tile was loaded
+        let elev = service.get_elevation(35.5, 138.5).unwrap();
+        assert_eq!(elev, Some(500));
+    }
+
+    #[test]
+    fn test_preload_multiple_bounding_boxes() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+        create_test_tile(temp_dir.path(), "N50E010.hgt", 1000);
+        create_test_tile(temp_dir.path(), "N20E020.hgt", 200);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // Two bounding boxes: one for Japan, one for Europe
+        let japan = BoundingBox::new(34.0, 137.0, 37.0, 140.0);
+        let europe = BoundingBox::new(49.0, 9.0, 52.0, 12.0);
+        let stats = service.preload(Some(&[japan, europe]));
+
+        assert_eq!(stats.tiles_matched, 2); // N35E138 and N50E010
+        assert_eq!(stats.tiles_loaded, 2);
+    }
+
+    #[test]
+    fn test_preload_already_cached() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+        create_test_tile(temp_dir.path(), "N36E139.hgt", 1000);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // First preload
+        let stats1 = service.preload(None);
+        assert_eq!(stats1.tiles_loaded, 2);
+        assert_eq!(stats1.tiles_already_cached, 0);
+
+        // Second preload — tiles should be cached
+        let stats2 = service.preload(None);
+        assert_eq!(stats2.tiles_loaded, 0);
+        assert_eq!(stats2.tiles_already_cached, 2);
+    }
+
+    #[test]
+    fn test_preload_empty_directory() {
+        let temp_dir = TempDir::new().unwrap();
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        let stats = service.preload(None);
+        assert_eq!(stats.tiles_matched, 0);
+        assert_eq!(stats.tiles_loaded, 0);
+    }
+
+    #[test]
+    fn test_preload_with_zip_files() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create a .hgt.zip file
+        let hgt_data = vec![0u8; SRTM3_SIZE];
+        let zip_path = temp_dir.path().join("N40E010.hgt.zip");
+        let file = fs::File::create(&zip_path).unwrap();
+        let mut zip_writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip_writer.start_file("N40E010.hgt", options).unwrap();
+        zip_writer.write_all(&hgt_data).unwrap();
+        zip_writer.finish().unwrap();
+
+        // Also create a regular .hgt file
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+        let stats = service.preload(None);
+
+        assert_eq!(stats.tiles_matched, 2);
+        assert_eq!(stats.tiles_loaded, 2);
+        assert_eq!(stats.tiles_failed, 0);
+    }
+
+    #[test]
+    fn test_bounding_box_overlaps_tile() {
+        // Tile N35E138 covers [35, 36) x [138, 139)
+        let bbox = BoundingBox::new(35.5, 138.5, 36.5, 139.5);
+        assert!(bbox.overlaps_tile(35, 138)); // overlaps
+
+        // Completely outside
+        let bbox = BoundingBox::new(40.0, 140.0, 41.0, 141.0);
+        assert!(!bbox.overlaps_tile(35, 138)); // no overlap
+
+        // Touching edge (exclusive boundary)
+        let bbox = BoundingBox::new(36.0, 139.0, 37.0, 140.0);
+        assert!(!bbox.overlaps_tile(35, 138)); // tile ends at 36,139
+
+        // Bbox fully contains tile
+        let bbox = BoundingBox::new(34.0, 137.0, 37.0, 140.0);
+        assert!(bbox.overlaps_tile(35, 138));
+
+        // Tile fully contains bbox
+        let bbox = BoundingBox::new(35.2, 138.2, 35.8, 138.8);
+        assert!(bbox.overlaps_tile(35, 138));
+
+        // Negative coordinates
+        let bbox = BoundingBox::new(-13.5, -78.5, -11.5, -76.5);
+        assert!(bbox.overlaps_tile(-13, -78));
+        assert!(bbox.overlaps_tile(-12, -78));
+        assert!(bbox.overlaps_tile(-13, -77));
+    }
+
+    #[test]
+    fn test_preload_no_match() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+
+        // Bounding box far from any tile
+        let bbox = BoundingBox::new(-50.0, -50.0, -49.0, -49.0);
+        let stats = service.preload(Some(&[bbox]));
+
+        assert_eq!(stats.tiles_matched, 0);
+        assert_eq!(stats.tiles_loaded, 0);
+    }
+
+    #[test]
+    fn test_scan_tile_files() {
+        let temp_dir = TempDir::new().unwrap();
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+        create_test_tile(temp_dir.path(), "N36E139.hgt", 1000);
+
+        // Create a non-tile file that should be ignored
+        fs::write(temp_dir.path().join("readme.txt"), "not a tile").unwrap();
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+        let files = service.scan_tile_files();
+
+        assert_eq!(files.len(), 2);
+        assert_eq!(files[0], "N35E138.hgt");
+        assert_eq!(files[1], "N36E139.hgt");
+    }
+
+    #[test]
+    fn test_scan_tile_files_deduplicates_zip() {
+        let temp_dir = TempDir::new().unwrap();
+
+        // Create both .hgt and .hgt.zip for same tile
+        create_test_tile(temp_dir.path(), "N35E138.hgt", 500);
+        let hgt_data = vec![0u8; SRTM3_SIZE];
+        let zip_path = temp_dir.path().join("N35E138.hgt.zip");
+        let file = fs::File::create(&zip_path).unwrap();
+        let mut zip_writer = zip::ZipWriter::new(file);
+        let options = zip::write::SimpleFileOptions::default()
+            .compression_method(zip::CompressionMethod::Stored);
+        zip_writer.start_file("N35E138.hgt", options).unwrap();
+        zip_writer.write_all(&hgt_data).unwrap();
+        zip_writer.finish().unwrap();
+
+        let service = SrtmService::new(temp_dir.path(), 10);
+        let files = service.scan_tile_files();
+
+        // Should deduplicate to single entry
+        assert_eq!(files.len(), 1);
+        assert_eq!(files[0], "N35E138.hgt");
     }
 }
