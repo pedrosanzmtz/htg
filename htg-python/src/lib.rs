@@ -83,16 +83,31 @@ impl SrtmService {
     /// Args:
     ///     lat: Latitude in decimal degrees (-60 to 60).
     ///     lon: Longitude in decimal degrees (-180 to 180).
+    ///     rounding: Rounding strategy for grid cell selection.
+    ///         "nearest" (default): Round to closest cell (true nearest-neighbor).
+    ///         "floor": Always round down (srtm.py compatible, southwest-biased).
     ///
     /// Returns:
     ///     Elevation in meters, or None if no data available (void, missing tile).
     ///
     /// Raises:
-    ///     ValueError: If coordinates are out of bounds.
-    fn get_elevation(&self, lat: f64, lon: f64) -> PyResult<Option<i16>> {
-        self.inner
-            .get_elevation(lat, lon)
-            .map_err(|e| PyValueError::new_err(e.to_string()))
+    ///     ValueError: If coordinates are out of bounds or rounding is invalid.
+    #[pyo3(signature = (lat, lon, rounding="nearest"))]
+    fn get_elevation(&self, lat: f64, lon: f64, rounding: &str) -> PyResult<Option<i16>> {
+        match rounding {
+            "nearest" => self
+                .inner
+                .get_elevation(lat, lon)
+                .map_err(|e| PyValueError::new_err(e.to_string())),
+            "floor" => self
+                .inner
+                .get_elevation_floor(lat, lon)
+                .map_err(|e| PyValueError::new_err(e.to_string())),
+            _ => Err(PyValueError::new_err(format!(
+                "Invalid rounding mode '{}'. Use 'nearest' or 'floor'.",
+                rounding
+            ))),
+        }
     }
 
     /// Get elevations for a batch of coordinates.
@@ -100,12 +115,30 @@ impl SrtmService {
     /// Args:
     ///     coords: List of (lat, lon) tuples.
     ///     default: Default value for void/missing data (default: 0).
+    ///     rounding: Rounding strategy for grid cell selection.
+    ///         "nearest" (default): Round to closest cell (true nearest-neighbor).
+    ///         "floor": Always round down (srtm.py compatible, southwest-biased).
     ///
     /// Returns:
     ///     List of elevation values in meters.
-    #[pyo3(signature = (coords, default=0))]
-    fn get_elevations_batch(&self, coords: Vec<(f64, f64)>, default: i16) -> Vec<i16> {
-        self.inner.get_elevations_batch(&coords, default)
+    ///
+    /// Raises:
+    ///     ValueError: If rounding is invalid.
+    #[pyo3(signature = (coords, default=0, rounding="nearest"))]
+    fn get_elevations_batch(
+        &self,
+        coords: Vec<(f64, f64)>,
+        default: i16,
+        rounding: &str,
+    ) -> PyResult<Vec<i16>> {
+        match rounding {
+            "nearest" => Ok(self.inner.get_elevations_batch(&coords, default)),
+            "floor" => Ok(self.inner.get_elevations_batch_floor(&coords, default)),
+            _ => Err(PyValueError::new_err(format!(
+                "Invalid rounding mode '{}'. Use 'nearest' or 'floor'.",
+                rounding
+            ))),
+        }
     }
 
     /// Get interpolated elevations for a batch of coordinates.

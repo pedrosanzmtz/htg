@@ -401,6 +401,9 @@ elevation = service.get_elevation_interpolated(35.3606, 138.7274)
 # Batch query — efficient, single FFI crossing
 coords = [(35.3606, 138.7274), (27.9881, 86.9250)]
 elevations = service.get_elevations_batch(coords, default=0)
+
+# Floor-based rounding (srtm.py compatible, for migration)
+elevation = service.get_elevation(35.3606, 138.7274, rounding="floor")
 ```
 
 ## SRTM Data

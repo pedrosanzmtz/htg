@@ -40,6 +40,25 @@ stats = service.cache_stats()
 print(f"Cache hit rate: {stats.hit_rate:.1%}")
 ```
 
+## srtm.py Compatibility
+
+If you're migrating from [srtm.py](https://github.com/tkrajina/srtm.py), use `rounding="floor"` for exact value parity. srtm.py uses `math.floor()` for grid cell selection, while htg defaults to `round()` (true nearest-neighbor). The difference is typically 1-3 meters at grid cell boundaries.
+
+```python
+import srtm
+
+service = srtm.SrtmService("/path/to/srtm", cache_size=100)
+
+# Default: true nearest-neighbor (round)
+elevation = service.get_elevation(33.3448, -96.1592)  # 190
+
+# srtm.py compatible: floor-based (southwest-biased)
+elevation = service.get_elevation(33.3448, -96.1592, rounding="floor")  # 191
+
+# Also works with batch queries
+elevations = service.get_elevations_batch(coords, default=0, rounding="floor")
+```
+
 ## Batch Queries
 
 Query multiple coordinates efficiently in a single call:
