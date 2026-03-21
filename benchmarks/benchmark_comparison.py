@@ -103,16 +103,16 @@ def benchmark_srtm4_startup(data_dir: str) -> float:
 def benchmark_htg_startup(data_dir: str, cache_size: int = 100) -> float:
     """Measure htg import and first query time."""
     # Clear module cache
-    if "srtm" in sys.modules:
-        del sys.modules["srtm"]
+    if "srtm_rs" in sys.modules:
+        del sys.modules["srtm_rs"]
 
     gc.collect()
 
     start = time.perf_counter()
-    import srtm
+    import srtm_rs
 
     # Create service and first query
-    service = srtm.SrtmService(data_dir, cache_size=cache_size)
+    service = srtm_rs.SrtmService(data_dir, cache_size=cache_size)
     lat, lon = TEST_COORDS[0]
     _ = service.get_elevation(lat, lon)
 
@@ -152,7 +152,7 @@ def benchmark_srtm4_memory(data_dir: str, num_tiles: int = 10) -> dict[str, floa
 def benchmark_htg_memory(data_dir: str, num_tiles: int = 10, cache_size: int = 100) -> dict[str, float]:
     """Measure htg memory usage."""
     try:
-        import srtm
+        import srtm_rs
     except ImportError:
         console.print("[yellow]htg not installed, skipping[/yellow]")
         return {"baseline_mb": 0, "after_queries_mb": 0, "delta_mb": 0}
@@ -160,7 +160,7 @@ def benchmark_htg_memory(data_dir: str, num_tiles: int = 10, cache_size: int = 1
     gc.collect()
     baseline_mem = get_process_memory_mb()
 
-    service = srtm.SrtmService(data_dir, cache_size=cache_size)
+    service = srtm_rs.SrtmService(data_dir, cache_size=cache_size)
 
     # Query multiple tiles
     for i in range(num_tiles):
@@ -223,11 +223,11 @@ def benchmark_srtm4_latency(data_dir: str, n_queries: int = 1000) -> dict[str, f
 def benchmark_htg_latency(data_dir: str, n_queries: int = 1000, cache_size: int = 100) -> dict[str, float]:
     """Measure htg query latency."""
     try:
-        import srtm
+        import srtm_rs
     except ImportError:
         return {"mean_ms": 0, "p50_ms": 0, "p95_ms": 0, "p99_ms": 0, "min_ms": 0, "max_ms": 0}
 
-    service = srtm.SrtmService(data_dir, cache_size=cache_size)
+    service = srtm_rs.SrtmService(data_dir, cache_size=cache_size)
 
     # Warm up (query first tile)
     lat, lon = TEST_COORDS[0]
@@ -296,11 +296,11 @@ def benchmark_srtm4_throughput(data_dir: str, duration_seconds: int = 5) -> dict
 def benchmark_htg_throughput(data_dir: str, duration_seconds: int = 5, cache_size: int = 100) -> dict[str, float]:
     """Measure htg throughput (single-threaded)."""
     try:
-        import srtm
+        import srtm_rs
     except ImportError:
         return {"queries_per_second": 0, "total_queries": 0}
 
-    service = srtm.SrtmService(data_dir, cache_size=cache_size)
+    service = srtm_rs.SrtmService(data_dir, cache_size=cache_size)
 
     # Warm up
     lat, lon = TEST_COORDS[0]
@@ -381,10 +381,10 @@ def run_benchmarks(data_dir: str, output_file: str | None = None):
         has_srtm4 = False
 
     try:
-        import srtm
+        import srtm_rs
         has_htg = True
     except ImportError:
-        console.print("[yellow]Warning: htg not installed. Install with: pip install htg[/yellow]")
+        console.print("[yellow]Warning: htg not installed. Install with: pip install srtm-rs[/yellow]")
         console.print("[yellow]Or install locally: cd htg-python && pip install -e .[/yellow]")
         has_htg = False
 

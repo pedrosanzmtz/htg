@@ -154,7 +154,7 @@ htg/                            # Workspace root
 │           ├── batch.rs        # CSV/GeoJSON batch processing
 │           ├── info.rs         # Tile information display
 │           └── list.rs         # List available tiles
-└── htg-python/                 # Python bindings (PyPI: srtm)
+└── htg-python/                 # Python bindings (PyPI: srtm-rs)
     ├── Cargo.toml
     ├── pyproject.toml
     ├── src/
@@ -169,7 +169,7 @@ htg/                            # Workspace root
 - **htg** library → crates.io
 - **htg-service** binary → DockerHub
 - **htg-cli** binary → crates.io (cargo install)
-- **htg-python** (srtm) → PyPI
+- **htg-python** (srtm-rs) → PyPI
 
 ## API Endpoints
 

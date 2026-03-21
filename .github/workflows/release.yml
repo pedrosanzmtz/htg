@@ -215,7 +215,7 @@ jobs:
 
             **Python:**
             ```bash
-            pip install srtm==${{ needs.check-version.outputs.version }}
+            pip install srtm-rs==${{ needs.check-version.outputs.version }}
             ```
 
             **Docker:**

@@ -1,4 +1,4 @@
-"""Type stubs for srtm - High-performance SRTM elevation library."""
+"""Type stubs for srtm_rs - High-performance SRTM elevation library."""
 
 from typing import List, Optional, Tuple
 

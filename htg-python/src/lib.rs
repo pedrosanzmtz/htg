@@ -358,18 +358,18 @@ fn filename_to_lat_lon(filename: &str) -> Option<(i32, i32)> {
     htg_lib::filename::filename_to_lat_lon(filename)
 }
 
-/// SRTM - High-performance SRTM elevation library.
+/// srtm_rs - High-performance SRTM elevation library.
 ///
 /// This module provides Python bindings for the htg Rust library,
 /// enabling fast elevation queries from SRTM .hgt files.
 ///
 /// Example:
-///     >>> import srtm
-///     >>> service = srtm.SrtmService("/path/to/srtm", cache_size=100)
+///     >>> import srtm_rs
+///     >>> service = srtm_rs.SrtmService("/path/to/srtm", cache_size=100)
 ///     >>> elevation = service.get_elevation(35.3606, 138.7274)
 ///     >>> print(f"Mount Fuji: {elevation}m")
 #[pymodule]
-fn srtm(m: &Bound<'_, PyModule>) -> PyResult<()> {
+fn srtm_rs(m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<SrtmService>()?;
     m.add_class::<CacheStats>()?;
     m.add_class::<PreloadStats>()?;

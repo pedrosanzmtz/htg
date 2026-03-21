@@ -1,6 +1,6 @@
 # The native extension module is imported directly by maturin
 # This file just ensures the package is recognized and provides type hints
-from srtm.srtm import (  # type: ignore[import]
+from srtm_rs.srtm_rs import (  # type: ignore[import]
     CacheStats as CacheStats,
     PreloadStats as PreloadStats,
     SrtmService as SrtmService,

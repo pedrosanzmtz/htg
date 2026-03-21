@@ -9,7 +9,7 @@ repository = "https://github.com/pedrosanzmtz/htg"
 readme = "README.md"
 
 [lib]
-name = "srtm"
+name = "srtm_rs"
 crate-type = ["cdylib"]
 
 [dependencies]
