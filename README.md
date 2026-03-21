@@ -51,9 +51,9 @@ htg/
 │       ├── main.rs       # CLI entry point
 │       └── commands/     # Command implementations
 │
-└── htg-python/       # Python bindings (PyPI: srtm)
+└── htg-python/       # Python bindings (PyPI: srtm-rs)
     ├── src/lib.rs        # PyO3 bindings
-    └── python/srtm/      # Python package + type stubs
+    └── python/srtm_rs/   # Python package + type stubs
 ```
 
 ## Quick Start
@@ -396,20 +396,20 @@ htg --data-dir /path/to/srtm --cache-size 50 --auto-download query --lat 35.5 --
 
 ## Python Bindings
 
-The `srtm` Python package provides native bindings via PyO3. Supports Python 3.12+.
+The `srtm-rs` Python package provides native bindings via PyO3. Supports Python 3.12+.
 
 ### Installation
 
 ```bash
-pip install srtm
+pip install srtm-rs
 ```
 
 ### Usage
 
 ```python
-import srtm
+import srtm_rs
 
-service = srtm.SrtmService("/path/to/srtm", cache_size=100)
+service = srtm_rs.SrtmService("/path/to/srtm", cache_size=100)
 
 # Single query — returns None for void/missing data
 elevation = service.get_elevation(35.3606, 138.7274)

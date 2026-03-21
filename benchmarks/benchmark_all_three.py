@@ -38,25 +38,9 @@ class LibraryResult:
 def benchmark_htg_python(data_dir: str, n_queries: int = 1000) -> LibraryResult:
     """Benchmark htg-python (Rust + PyO3)."""
     try:
-        # Uninstall srtm.py temporarily to avoid namespace conflict
-        import subprocess
-        subprocess.run(["uv", "pip", "uninstall", "srtm.py"],
-                      capture_output=True, check=False)
+        import srtm_rs
 
-        # Clear module cache
-        if 'srtm' in sys.modules:
-            del sys.modules['srtm']
-
-        import srtm
-
-        # Verify it's the right module
-        if not hasattr(srtm, 'SrtmService'):
-            return LibraryResult(
-                "htg-python", "Rust + PyO3", 0, 0, 0, False,
-                "Wrong srtm module imported"
-            )
-
-        service = srtm.SrtmService(data_dir, cache_size=100)
+        service = srtm_rs.SrtmService(data_dir, cache_size=100)
 
         # Warmup
         _ = service.get_elevation(35.3606, 138.7274)
@@ -81,23 +65,7 @@ def benchmark_htg_python(data_dir: str, n_queries: int = 1000) -> LibraryResult:
 def benchmark_srtm_py(data_dir: str, n_queries: int = 1000) -> LibraryResult:
     """Benchmark srtm.py (pure Python)."""
     try:
-        # Reinstall srtm.py
-        import subprocess
-        subprocess.run(["uv", "pip", "install", "srtm.py"],
-                      capture_output=True, check=False)
-
-        # Clear module cache
-        if 'srtm' in sys.modules:
-            del sys.modules['srtm']
-
         import srtm
-
-        # Verify it's the right module
-        if not hasattr(srtm, 'get_data'):
-            return LibraryResult(
-                "srtm.py", "Pure Python", 0, 0, 0, False,
-                "Wrong srtm module imported - htg-python detected"
-            )
 
         elevation_data = srtm.get_data(local_cache_dir=data_dir)
 

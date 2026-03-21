@@ -1,6 +1,6 @@
-# srtm - High-performance SRTM Elevation Library
+# srtm-rs - High-performance SRTM Elevation Library
 
-[![PyPI](https://img.shields.io/pypi/v/srtm.svg)](https://pypi.org/project/srtm/)
+[![PyPI](https://img.shields.io/pypi/v/srtm-rs.svg)](https://pypi.org/project/srtm-rs/)
 [![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](https://opensource.org/licenses/MIT)
 
 **Ultra-fast SRTM elevation queries in Python.** Built with Rust, delivering **3.5x faster** performance than the most popular Python SRTM library.
@@ -10,7 +10,7 @@ Python bindings for the [htg](https://github.com/pedrosanzmtz/htg) Rust library,
 ## Installation
 
 ```bash
-pip install srtm
+pip install srtm-rs
 ```
 
 Prebuilt wheels are available for Python 3.12+ on Linux (x86_64, aarch64), macOS (Apple Silicon, x86_64), and Windows (x86_64).
@@ -18,10 +18,10 @@ Prebuilt wheels are available for Python 3.12+ on Linux (x86_64, aarch64), macOS
 ## Quick Start
 
 ```python
-import srtm
+import srtm_rs
 
 # Create service with up to 100 cached tiles
-service = srtm.SrtmService("/path/to/srtm", cache_size=100)
+service = srtm_rs.SrtmService("/path/to/srtm", cache_size=100)
 
 # Query elevation (Mount Fuji)
 # Returns None for void data or missing tiles
@@ -45,9 +45,9 @@ print(f"Cache hit rate: {stats.hit_rate:.1%}")
 If you're migrating from [srtm.py](https://github.com/tkrajina/srtm.py), use `rounding="floor"` for exact value parity. srtm.py uses `math.floor()` for grid cell selection, while htg defaults to `round()` (true nearest-neighbor). The difference is typically 1-3 meters at grid cell boundaries.
 
 ```python
-import srtm
+import srtm_rs
 
-service = srtm.SrtmService("/path/to/srtm", cache_size=100)
+service = srtm_rs.SrtmService("/path/to/srtm", cache_size=100)
 
 # Default: true nearest-neighbor (round)
 elevation = service.get_elevation(33.3448, -96.1592)  # 190
@@ -64,9 +64,9 @@ elevations = service.get_elevations_batch(coords, default=0, rounding="floor")
 Query multiple coordinates efficiently in a single call:
 
 ```python
-import srtm
+import srtm_rs
 
-service = srtm.SrtmService("/path/to/srtm", cache_size=100)
+service = srtm_rs.SrtmService("/path/to/srtm", cache_size=100)
 
 coords = [
     (35.3606, 138.7274),  # Mount Fuji
@@ -84,9 +84,9 @@ print(elevations)  # [3776, 8752, 3148]
 Warm the cache at startup to avoid cold-start latency (useful when tiles are on NFS):
 
 ```python
-import srtm
+import srtm_rs
 
-service = srtm.SrtmService("/path/to/srtm", cache_size=100)
+service = srtm_rs.SrtmService("/path/to/srtm", cache_size=100)
 
 # Preload all tiles
 stats = service.preload()
@@ -105,18 +105,18 @@ service.preload(blocking=False)
 ## Utility Functions
 
 ```python
-import srtm
+import srtm_rs
 
 # Convert coordinates to filename
-filename = srtm.lat_lon_to_filename(35.5, 138.7)
+filename = srtm_rs.lat_lon_to_filename(35.5, 138.7)
 print(filename)  # "N35E138.hgt"
 
 # Parse filename to coordinates
-coords = srtm.filename_to_lat_lon("N35E138.hgt")
+coords = srtm_rs.filename_to_lat_lon("N35E138.hgt")
 print(coords)  # (35, 138)
 
 # Void value constant
-print(srtm.VOID_VALUE)  # -32768
+print(srtm_rs.VOID_VALUE)  # -32768
 ```
 
 ## SRTM Data
@@ -129,15 +129,15 @@ Both `.hgt` and `.hgt.zip` files are supported. ZIP files are transparently extr
 
 ## Performance
 
-srtm delivers **exceptional performance** through its Rust core and PyO3 bindings, significantly outperforming traditional Python SRTM libraries.
+srtm-rs delivers **exceptional performance** through its Rust core and PyO3 bindings, significantly outperforming traditional Python SRTM libraries.
 
 ### Benchmarks vs Popular Python Libraries
 
 Comparison using **local .hgt files only** (fair, apples-to-apples test):
 
-| Library | Implementation | Per Query | Throughput | vs srtm |
-|---------|----------------|-----------|------------|---------|
-| **srtm** | Rust + PyO3 | **0.41 us** | **2,419,110 q/s** | 1.0x (baseline) |
+| Library | Implementation | Per Query | Throughput | vs srtm-rs |
+|---------|----------------|-----------|------------|------------|
+| **srtm-rs** | Rust + PyO3 | **0.41 us** | **2,419,110 q/s** | 1.0x (baseline) |
 | **[srtm.py](https://github.com/tkrajina/srtm.py)** | Pure Python (256 stars) | 1.43 us | 697,654 q/s | **3.5x slower** |
 | **[srtm4](https://github.com/centreborelli/srtm4)** | Python + C++ subprocess | 99,630 us | 10 q/s | **241,017x slower** |
 
@@ -159,8 +159,8 @@ Comparison using **local .hgt files only** (fair, apples-to-apples test):
 ### Real-World Performance
 
 ```python
-import srtm
-service = srtm.SrtmService("/path/to/data", cache_size=100)
+import srtm_rs
+service = srtm_rs.SrtmService("/path/to/data", cache_size=100)
 
 # Single query: ~0.4 microseconds (sub-millisecond!)
 elevation = service.get_elevation(35.3606, 138.7274)

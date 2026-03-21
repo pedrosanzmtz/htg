@@ -3,7 +3,7 @@ requires = ["maturin>=1.4,<2.0"]
 build-backend = "maturin"
 
 [project]
-name = "srtm"
+name = "srtm-rs"
 dynamic = ["version"]
 description = "High-performance SRTM elevation data library"
 readme = "README.md"
@@ -35,4 +35,4 @@ dev = ["pytest", "maturin"]
 [tool.maturin]
 features = ["pyo3/extension-module"]
 python-source = "python"
-module-name = "srtm"
+module-name = "srtm_rs"
